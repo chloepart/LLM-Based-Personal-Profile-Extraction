@@ -29,7 +29,7 @@ if __name__ == '__main__':
 
     model_config = open_config(config_path=args.model_config_path)
     model_config['model_info']['name'] = args.model_name
-    if 'palm' in args.model_config_path or 'gemini' in args.model_config_path or 'gpt' in args.model_config_path:
+    if 'palm' in args.model_config_path or 'gemini' in args.model_config_path or 'gpt' in args.model_config_path or 'groq' in args.model_config_path:
         assert (0 <= args.api_key_pos < len(model_config["api_key_info"]["api_keys"]))
         model_config["api_key_info"]["api_key_use"] = args.api_key_pos
         print(f'API KEY POS = {model_config["api_key_info"]["api_key_use"]}')

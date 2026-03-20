@@ -1,12 +1,12 @@
 {
     "model_info":{
         "provider":"gemini",
-        "name":"gemini-pro-vision",
+        "name":"gemini-2.0-flash-lite",
         "type":"multi-modal"
     },
     "api_key_info":{
         "api_keys":[
-            "AIzaSyDaULwd05ZXj4V7cxMQCQ43L3lG4ccs93I"
+            "AIzaSyCEaiD9WTHS0aPygdE-lmIVutSm5QRLL8o"
         ],
         "api_key_use": 0
     },
