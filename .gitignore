@@ -1,1 +1,7 @@
-/.DS_Storeconfigs/model_configs/*_config.json
+configs/model_configs/gemini_config.json
+configs/model_configs/gpt_config.json
+configs/model_configs/palm2_config.json
+pie_env/
+log/
+data/
+.DS_Store

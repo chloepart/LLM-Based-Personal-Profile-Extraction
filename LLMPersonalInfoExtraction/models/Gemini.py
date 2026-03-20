@@ -2,10 +2,8 @@ import google.generativeai as palm
 import google.ai.generativelanguage as gen_lang
 import PIL.Image
 import time
-
 from .Model import Model
 from ..utils import load_image
-
 
 class Gemini(Model):
     def __init__(self, config):
@@ -16,9 +14,8 @@ class Gemini(Model):
         self.api_key = api_keys[api_pos]
         self.set_API_key()
         self.max_output_tokens = int(config["params"]["max_output_tokens"])
-
-        self.text_model = palm.GenerativeModel('gemini-pro')
-        self.vision_model = palm.GenerativeModel('gemini-pro-vision')
+        self.text_model = palm.GenerativeModel(config['model_info']['name'])
+        self.vision_model = palm.GenerativeModel(config['model_info']['name'])
         
     def set_API_key(self):
         palm.configure(api_key=self.api_key)
@@ -28,7 +25,8 @@ class Gemini(Model):
         while trial < 5:
             try:
                 return self.__do_query(msg, image)
-            except:
+            except Exception as e:
+                print(f"  !! Gemini query error (trial {trial}): {e}")
                 trial += 1
                 if trial % 2 == 1:
                     time.sleep(0.5)
@@ -37,17 +35,13 @@ class Gemini(Model):
     def __do_query(self, msg, image=None):
         if image is None:
             raw_response = self.text_model.generate_content(msg)
-
         elif type(image) == str:
-            # We assume this is the path to the image
             img = load_image(image)
             if img is None:
                 raise RuntimeError(f"Bad image: {image}")
             raw_response = self.vision_model.generate_content([msg, img], stream=True)
             raw_response.resolve()
-        
         else:
-            # print('here')
             raw_response = self.vision_model.generate_content([msg, image], stream=True)
             raw_response.resolve()
         

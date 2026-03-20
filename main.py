@@ -105,7 +105,7 @@ if __name__ == '__main__':
             
             # Sleep for a while to avoid exceeding the rate limit
             if cnt == 1 and model.provider in ('palm2', 'gpt', 'gemini'):
-                time.sleep(3)
+                time.sleep(5)
 
             try:
                 raw_response = attacker.query(
@@ -119,15 +119,15 @@ if __name__ == '__main__':
                     total=len(task_manager),
                     image=img
                 )
-            except RuntimeError:
-                # This can happen for various reasons: API outdated, instable network, rate limit exceeded, etc. 
-                # For simplicity we mark the prediciton as empty. 
+            except RuntimeError as e:
+                print(f"  !! API ERROR on {info_cat}: {e}")
                 raw_response = ""
 
             all_raw_responses[info_cat].append(raw_response)
             all_labels[info_cat].append(curr_label[info_cat])
             _ = evaluator.update(raw_response, curr_label, info_cat, defense, verbose=args.verbose)
             cnt = (cnt + 1) % 2
+            time.sleep(4)
         if args.verbose > 0:  print('\n----------------\n')
     
     np.savez(f'{res_save_path}/all_raw_responses.npz', res=all_raw_responses, label=all_labels)
