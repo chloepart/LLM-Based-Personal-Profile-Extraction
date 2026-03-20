@@ -41,8 +41,8 @@ def run(provider, model_name, dataset, api_key_pos, defense, prompt_type, icl_nu
 
 """ 1 Selecting the LLM """
 model_info = [
-    'palm2',
-    'models/text-bison-001'
+    'gemini', 
+    'gemini-1.5-flash'
 ]
 # model_info = [
 #     'palm2',
@@ -122,7 +122,7 @@ redundant_info_filtering = "True"
 - hyperlink: hyperlink
 - mask: name replacement, e.g., albert.einstein@gmail.com to <first_name>.<last_name>@gmail.com
 """
-defenses = ['pi_ci_id']
+defenses = ['no']
 # defenses = ['image']
 # defenses = ['pi_ci', 'pi_id', 'pi_ci_id']
 # defenses = ['replace_at', 'replace_dot', 'replace_at_dot', 'hyperlink', 'mask']
