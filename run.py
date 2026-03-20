@@ -42,7 +42,7 @@ def run(provider, model_name, dataset, api_key_pos, defense, prompt_type, icl_nu
 """ 1 Selecting the LLM """
 model_info = [
     'gemini', 
-    'gemini-1.5-flash'
+    'gemini-2.0-flash'
 ]
 # model_info = [
 #     'palm2',
