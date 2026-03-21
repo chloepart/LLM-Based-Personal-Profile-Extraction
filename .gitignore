@@ -1,9 +1,8 @@
-configs/model_configs/gemini_config.json
-configs/model_configs/gpt_config.json
-configs/model_configs/groq_config.json
-configs/model_configs/palm2_config.json
+configs/model_configs/
 pie_env/
 log/
 data/
 .DS_Store
 *.npz
+result/
+test_bypass.py
