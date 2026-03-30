@@ -1,8 +1,71 @@
-configs/model_configs/
+# Environment
 pie_env/
-log/
+venv/
+env/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Configuration with sensitive data
+configs/model_configs/
+configs/*/api_keys.json
+configs/*/*_config.json  # Exclude model configs (regenerate from template)
+
+# Data (large, regenerated from Zenodo)
 data/
-.DS_Store
-*.npz
+!data/system_prompts/
+!data/system_prompts/*
+
+# Results (large output files)
 result/
+log/
+senate_results/
+senate_html/  # Downloaded data
+
+# Temporary files
+.DS_Store
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+.Python
+*.so
+
+# Jupyter & notebooks
+.ipynb_checkpoints/
+*.ipynb_checkpoints/
+
+# Results & artifacts
+*.npz
+*.npy
+*.csv
+*.json  # Except those tracked in repo
+pii_report_*.txt
+pii_report_*.json
+
+# Test/debug files
 test_bypass.py
+*.log
+*.tmp
+debug_*.py
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.sublime-*
+
+# Secrets (if accidentally added)
+.env
+.env.local
+*.key
+*.pem

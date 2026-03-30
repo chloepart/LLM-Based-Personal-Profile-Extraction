@@ -14,13 +14,13 @@ class Groq(Model):
 
     def query(self, msg, image=None):
         trial = 0
-        while trial < 10:
+        while trial < 20:
             try:
                 return self.__do_query(msg)
             except Exception as e:
                 print(f"  !! Groq query error (trial {trial}): {e}")
                 trial += 1
-                time.sleep(5)
+                time.sleep(180)
         return ''
 
     def __do_query(self, msg):

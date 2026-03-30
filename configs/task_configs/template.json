@@ -1,0 +1,13 @@
+{
+  "task_info": {
+    "task": "personal_information_extraction",
+    "type": "single_turn"
+  },
+  "dataset_info": {
+    "dataset": "custom_dataset",
+    "path": "./data/custom_dataset",
+    "label_path": "./data/custom_dataset/labels.json",
+    "icl_path": "./data/icl",
+    "icl_label_path": "./data/icl/labels.json"
+  }
+}

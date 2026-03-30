@@ -15,7 +15,7 @@ datasets = ['synthetic']
 prompt_types = ['direct']
 icl_nums = [0]
 redundant_info_filtering = 'True'
-defenses = ['replace_at', 'replace_dot', 'replace_at_dot', 'hyperlink', 'mask']
+defenses = ['pi_ci', 'pi_id', 'pi_ci_id']
 adaptive_attacks_on_pi = ['no']
 
 for dataset in datasets:
