@@ -7,6 +7,12 @@ env/
 dist/
 build/
 
+# API Keys & Secrets
+.env
+.env.local
+.env.*.local
+!.env.example
+
 # Configuration with sensitive data
 configs/model_configs/
 configs/*/api_keys.json

@@ -1,4 +1,10 @@
 import argparse
+import sys
+from pathlib import Path
+
+# Add parent directory to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import LLMPersonalInfoExtraction as PIE
 from LLMPersonalInfoExtraction.utils import open_config
 from LLMPersonalInfoExtraction.utils import open_txt
@@ -14,17 +20,17 @@ def main(args):
 
     defense = PIE.create_defense(args.defense)
 
-    model_config = open_config(config_path=f'./configs/model_configs/{args.provider}_config.json')
+    model_config = open_config(config_path=f'../configs/model_configs/{args.provider}_config.json')
     if args.model_name != '':  model_config['model_info']['name'] = args.model_name
 
-    res_save_path = f'./result/{model_config["model_info"]["provider"]}_{model_config["model_info"]["name"].split("/")[-1]}/{task_manager.dataset}_{args.defense}_{args.prompt_type}_{args.icl_num}_adaptive_attack_{args.adaptive_attack}'
+    res_save_path = f'../outputs/result/{model_config["model_info"]["provider"]}_{model_config["model_info"]["name"].split("/")[-1]}/{task_manager.dataset}_{args.defense}_{args.prompt_type}_{args.icl_num}_adaptive_attack_{args.adaptive_attack}'
     
     raw_responses_npz = np.load(f'{res_save_path}/all_raw_responses.npz', allow_pickle=True)
 
     all_raw_responses = raw_responses_npz['res'].item()
     all_labels = raw_responses_npz['label'].item()
     total_num = len(all_raw_responses['email'])
-    info_cats = open_txt('./data/system_prompts/info_category.txt') if defense.defense in ('no', 'pi_ci_id', 'pi_ci', 'pi_id') else ['email']
+    info_cats = open_txt('../data/system_prompts/info_category.txt') if defense.defense in ('no', 'pi_ci_id', 'pi_ci', 'pi_id') else ['email']
     evaluator = PIE.create_evaluator(model_config["model_info"]["provider"], info_cats, metric_2=args.m2)
 
     for i in range(total_num):

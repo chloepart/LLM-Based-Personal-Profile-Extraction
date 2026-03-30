@@ -1,9 +1,13 @@
 import os
+from pathlib import Path
+
+# Adjust paths since we're now in experiments/ subdirectory
+BASE_PATH = Path(__file__).parent.parent
 
 def run(provider, model_name, dataset, api_key_pos, defense, prompt_type, icl_num, gpus, adaptive_attack_on_pi, redundant_info_filtering):
-    model_config_path = './configs/model_configs/' + provider + '_config.json'
-    task_config_path = './configs/task_configs/' + dataset + '.json'
-    log_dir = './log/' + provider + '_' + model_name.split('/')[-1]
+    model_config_path = '../configs/model_configs/' + provider + '_config.json'
+    task_config_path = '../configs/task_configs/' + dataset + '.json'
+    log_dir = '../outputs/log/' + provider + '_' + model_name.split('/')[-1]
     os.makedirs(log_dir, exist_ok=True)
     log_file = log_dir + '/' + dataset + '_' + defense + '_' + prompt_type + '_' + str(icl_num) + '_adaptive_' + adaptive_attack_on_pi + '_filter_' + redundant_info_filtering + '.txt'
     cmd = 'python3 -u main.py --model_config_path ' + model_config_path + ' --model_name ' + model_name + ' --task_config_path ' + task_config_path + ' --icl_num ' + str(icl_num) + ' --prompt_type ' + prompt_type + ' --api_key_pos ' + str(api_key_pos) + ' --defense ' + defense + ' --gpus ' + gpus + ' --adaptive_attack ' + adaptive_attack_on_pi + ' --redundant_info_filtering ' + redundant_info_filtering + ' 2>&1 | tee ' + log_file
