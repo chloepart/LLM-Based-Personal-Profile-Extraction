@@ -1,17 +1,27 @@
 import argparse
+import sys
+from pathlib import Path
+
+# Add parent directory to path to import LLMPersonalInfoExtraction
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import LLMPersonalInfoExtraction as PIE
 from LLMPersonalInfoExtraction.utils import open_config
 from LLMPersonalInfoExtraction.utils import open_txt, load_image
 from LLMPersonalInfoExtraction.utils import load_instruction, parsed_data_to_string
+from LLMPersonalInfoExtraction.config_loader import get_api_key
 import time
 import os
 import numpy as np
 
+# Base path for relative imports
+BASE_PATH = Path(__file__).parent.parent
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='PIE Execution')
-    parser.add_argument('--model_config_path', default='./configs/model_configs/palm2_config.json', type=str)
+    parser.add_argument('--model_config_path', default='../configs/model_configs/palm2_config.json', type=str)
     parser.add_argument('--model_name', default='', type=str)
-    parser.add_argument('--task_config_path', default='./configs/task_configs/synthetic.json', type=str)
+    parser.add_argument('--task_config_path', default='../configs/task_configs/synthetic.json', type=str)
     parser.add_argument('--api_key_pos', default=0, type=int)
     parser.add_argument('--defense', default='no', type=str)
     parser.add_argument('--prompt_type', default='direct', type=str)
@@ -43,7 +53,7 @@ if __name__ == '__main__':
     model.print_model_info()
     attacker = PIE.create_attacker(model, adaptive_attack=args.adaptive_attack, icl_manager=icl_manager, prompt_type=args.prompt_type)
 
-    info_cats = open_txt('./data/system_prompts/info_category.txt')
+    info_cats = open_txt('../data/system_prompts/info_category.txt')
     evaluator = PIE.create_evaluator(model.provider, info_cats)
     instructions = load_instruction(args.prompt_type, info_cats)
 
@@ -52,9 +62,9 @@ if __name__ == '__main__':
     email_only = defense.defense not in ['no', 'pi_ci', 'pi_id', 'pi_ci_id', 'image']
     
     if args.redundant_info_filtering == 'True':
-        res_save_path = f'./result/{model.provider}_{model.name.split("/")[-1]}/{task_manager.dataset}_{args.defense}_{args.prompt_type}_{args.icl_num}_adaptive_attack_{args.adaptive_attack}'
+        res_save_path = f'../outputs/result/{model.provider}_{model.name.split("/")[-1]}/{task_manager.dataset}_{args.defense}_{args.prompt_type}_{args.icl_num}_adaptive_attack_{args.adaptive_attack}'
     else:
-        res_save_path = f'./result/{model.provider}_{model.name.split("/")[-1]}/{task_manager.dataset}_{args.defense}_{args.prompt_type}_{args.icl_num}_adaptive_attack_{args.adaptive_attack}_{args.redundant_info_filtering}'
+        res_save_path = f'../outputs/result/{model.provider}_{model.name.split("/")[-1]}/{task_manager.dataset}_{args.defense}_{args.prompt_type}_{args.icl_num}_adaptive_attack_{args.adaptive_attack}_{args.redundant_info_filtering}'
     os.makedirs(res_save_path, exist_ok=True)
 
     all_raw_responses = dict(zip(info_cats, [[] for _ in range(len(info_cats))]))
@@ -73,12 +83,12 @@ if __name__ == '__main__':
 
         if args.defense == 'image':
             if model.provider == 'gemini':
-                img = load_image(f'./data/synthetic_images/{curr_label["name"]}.jpg')
+                img = load_image(f'../data/synthetic_images/{curr_label["name"]}.jpg')
                 if img is None:
-                    print(f'Skip bad image: ./data/synthetic_images/{curr_label["name"]}.jpg\n')
+                    print(f'Skip bad image: ../data/synthetic_images/{curr_label["name"]}.jpg\n')
                     continue
             elif model.provider == 'gpt':
-                img = f'./data/synthetic_images/{curr_label["name"]}.jpg'
+                img = f'../data/synthetic_images/{curr_label["name"]}.jpg'
             else:
                 raise ValueError
         else:
