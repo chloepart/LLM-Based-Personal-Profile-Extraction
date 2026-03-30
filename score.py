@@ -2,7 +2,7 @@ import numpy as np
 from rouge import Rouge
 rouge = Rouge()
 
-defenses = ['no', 'replace_at', 'replace_dot', 'replace_at_dot', 'hyperlink', 'mask']
+defenses = ['no', 'replace_at', 'replace_dot', 'replace_at_dot', 'hyperlink', 'mask', 'pi_ci', 'pi_id', 'pi_ci_id']
 base = './result/groq_llama-3.1-8b-instant'
 
 for defense in defenses:
