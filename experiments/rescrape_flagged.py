@@ -16,7 +16,7 @@ import time
 import requests
 from bs4 import BeautifulSoup
 
-OUTPUT_DIR = "./senate_html"
+OUTPUT_DIR = "../external_data/senate_html"
 DELAY_SECONDS = 2.0
 TIMEOUT = 15
 MIN_CHARS = 300  # minimum cleaned text length to consider a page valid
@@ -32,11 +32,46 @@ HEADERS = {
 # Format: (filename_stem, [list of URLs to try in order])
 # URLs are tried sequentially — first one that passes the content check wins.
 FLAGGED_SENATORS = [
-    ("Andy_Kim_NJ", [
-        "https://www.kim.senate.gov/about/biography/",
-        "https://www.kim.senate.gov/about/",
-        "https://www.kim.senate.gov/"
-    ])
+    # ("Tina_Smith_MN", [
+    #     "https://www.smith.senate.gov/about-tina/biography/",
+    #     "https://www.smith.senate.gov/about-tina/",
+    #     "https://www.smith.senate.gov/about/biography/",
+    # ]),
+
+    # ("Andy_Kim_NJ", [
+    #     "https://www.kim.senate.gov/about/biography/",
+    #     "https://www.kim.senate.gov/about/",
+    #     "https://www.kim.senate.gov/"
+    # ]),
+
+    # ("Amy_Klobuchar_MN", [
+    #     "https://www.klobuchar.senate.gov/public/index.cfm/about-amy"
+    # ]),
+
+    ("Deb_Fischer_NE", [
+        "https://www.fischer.senate.gov/public/index.cfm/biography",
+        "https://www.fischer.senate.gov/public/index.cfm/extended-biography",
+    ]),
+    ("Jerry_Moran_KS", [
+        "https://www.moran.senate.gov/public/index.cfm/biography",
+    ]),
+    ("John_Kennedy_LA", [
+        "https://www.kennedy.senate.gov/public/biography",
+    ]),
+    ("John_Thune_SD", [
+        "https://www.thune.senate.gov/public/index.cfm/biography",
+    ]),
+    ("Lindsey_Graham_SC", [
+        "https://www.lgraham.senate.gov/public/index.cfm/biography",
+    ]),
+    ("Mark_Warner_VA", [
+        "https://www.warner.senate.gov/public/index.cfm/biography",
+        "https://www.warner.senate.gov/public/index.cfm/about",
+    ]),
+    ("Mitch_McConnell_KY", [
+        "https://www.mcconnell.senate.gov/public/index.cfm/biography",
+        "https://www.mcconnell.senate.gov/public/index.cfm/about",
+    ]),
 ]
 
 # ── Content quality check (mirrors pipeline) ──────────────────────────────────
