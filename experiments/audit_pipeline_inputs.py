@@ -54,6 +54,17 @@ print(f"Total HTML files found: {len(html_files)}\n")
 
 KEY_SIGNALS = ["committee", "education", "born", "senator", "degree", "university", "college"]
 
+# Phrases that indicate a 404/error page even when HTTP status was 200
+ERROR_PHRASES = [
+    "404 error",
+    "page not found",
+    "requested page not found",
+    "error page",
+    "this page does not exist",
+    "no longer available",
+    "has moved",
+]
+
 html_audit = []
 for f in html_files:
     html = f.read_text(encoding="utf-8", errors="ignore")
@@ -61,11 +72,15 @@ for f in html_files:
     text_lower = text.lower()
 
     signals_found = [s for s in KEY_SIGNALS if s in text_lower]
+    error_phrase = next((p for p in ERROR_PHRASES if p in text_lower), None)
+
     row = {
         "file": f.stem,
         "raw_html_chars": len(html),
         "cleaned_text_chars": len(text),
         "flagged_short": len(text) < args.min_chars,
+        "flagged_404": error_phrase is not None,
+        "error_phrase": error_phrase or "",
         "signals_found": ", ".join(signals_found) if signals_found else "NONE",
         "signal_count": len(signals_found),
     }
@@ -75,11 +90,16 @@ df_html = pd.DataFrame(html_audit)
 
 # Summary
 flagged = df_html[df_html["flagged_short"]]
+flagged_404 = df_html[df_html["flagged_404"]]
 no_signals = df_html[df_html["signal_count"] == 0]
 
 print(f"Files with cleaned text < {args.min_chars} chars (suspicious): {len(flagged)}")
 if not flagged.empty:
     print(flagged[["file", "cleaned_text_chars"]].to_string(index=False))
+
+print(f"\nFiles with 404/error page content: {len(flagged_404)}")
+if not flagged_404.empty:
+    print(flagged_404[["file", "cleaned_text_chars", "error_phrase"]].to_string(index=False))
 
 print(f"\nFiles with NO key signals found: {len(no_signals)}")
 if not no_signals.empty:

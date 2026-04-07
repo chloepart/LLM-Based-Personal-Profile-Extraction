@@ -41,3 +41,45 @@ def load_image(image_path):
     except PIL.UnidentifiedImageError:
         img = None
     return img
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# NEW: PIPELINE UTILITIES (refactored from notebook)
+# ─────────────────────────────────────────────────────────────────────────────
+
+from .config import (
+    PATHS,
+    DELAYS,
+    PATTERNS,
+    TASK1_FIELDS,
+    EXACT_MATCH_FIELDS,
+    TEXT_OVERLAP_FIELDS,
+    SEMANTIC_FIELDS,
+    PROMPT_STYLES,
+    EVAL_CONFIG,
+    LLMConfig,
+    DEFAULT_CONFIGS,
+    get_path,
+    ensure_paths_exist,
+    get_config,
+)
+
+from .text_processing import (
+    normalize_name,
+    create_slug,
+    create_wikipedia_url,
+    name_match_score,
+    create_normalized_senator_id,
+    extract_readable_text,
+    ABBREVIATION_EXPANSIONS,
+    WIKIPEDIA_SLUG_OVERRIDES,
+)
+
+from .http_client import (
+    create_session,
+    safe_get,
+    is_quota_error,
+    extract_retry_delay,
+    call_llm_with_retry,
+    parse_json_response,
+)
