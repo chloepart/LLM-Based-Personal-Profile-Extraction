@@ -4,7 +4,7 @@ Consolidated utilities for configuration, name processing, HTML extraction,
 parsing, baselines, and evaluation.
 """
 
-from .config import (
+from .config_unified import (
     PATHS,
     TASK1_DIRECT,
     TASK1_PSEUDOCODE,
@@ -12,6 +12,9 @@ from .config import (
     PROMPT_STYLE_MAP,
     ABLATION_STYLES,
     EDUCATION_PROMPT,
+    APIConfig,
+    RateLimitConfig,
+    AblationConfig,
     PipelineConfig,
     T1_FIELDS,
     T1_FIELDS_CMP,
@@ -20,6 +23,8 @@ from .config import (
     RELIGION_HIERARCHY,
 )
 
+from .logging_config import setup_logging, get_logger
+
 from .name_utils import NameNormalizer
 
 from .html_processing import (
@@ -27,6 +32,20 @@ from .html_processing import (
     WikipediaExtractor,
     extract_readable_text,
     extract_infobox,
+)
+
+# NEW: HTML utilities (consolidated from static methods)
+from .html_utils import (
+    extract_readable_text as extract_readable_text_fn,
+    extract_infobox as extract_infobox_fn,
+    extract_wikipedia_profile,
+)
+
+# NEW: Data merging and signal detection
+from .data_merge import (
+    merge_pew,
+    detect_religion_signal,
+    normalize_birthdate,
 )
 
 from .api import (
@@ -45,6 +64,8 @@ from .parsing import (
     SchoolNormalizer,
     normalize_school,
     compare_education_components,
+    parse_date,
+    birthdate_scores,
 )
 
 # NEW: Baseline extractors (regex + spaCy NER + keyword search + BERT NER)
@@ -74,7 +95,7 @@ from .evaluator import (
 )
 
 __all__ = [
-    # config
+    # config_unified
     "PATHS",
     "TASK1_DIRECT",
     "TASK1_PSEUDOCODE",
@@ -82,12 +103,18 @@ __all__ = [
     "PROMPT_STYLE_MAP",
     "ABLATION_STYLES",
     "EDUCATION_PROMPT",
+    "APIConfig",
+    "RateLimitConfig",
+    "AblationConfig",
     "PipelineConfig",
     "T1_FIELDS",
     "T1_FIELDS_CMP",
     "GT_FIELDS",
     "REGEX_PATTERNS",
     "RELIGION_HIERARCHY",
+    # logging_config
+    "setup_logging",
+    "get_logger",
     # name_utils
     "NameNormalizer",
     # html_processing

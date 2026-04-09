@@ -252,6 +252,91 @@ def compare_education_components(gt_items, pred_items):
     }
 
 
+# ============================================================================
+# DATE PARSING (consolidated from evaluator.py)
+# ============================================================================
+
+_CURRENT_YEAR = 2025  # Used for two-digit year correction
+
+
+def _two_digit_year_fix(ts, gt_year=None):
+    """
+    Fix two-digit years that pandas infers incorrectly.
+    
+    pandas uses a 50-year pivot (≥50 → 1900s, <50 → 2000s) which can
+    misinterpret years. This corrects for that.
+    """
+    if pd.isna(ts):
+        return ts
+    
+    year = ts.year
+    # If pandas mapped a two-digit year to future (e.g. 2082), correct it
+    if year > _CURRENT_YEAR:
+        year -= 100
+        ts = ts.replace(year=year)
+    
+    return ts
+
+
+def parse_date(val, gt_year=None):
+    """
+    Parse a date string in any common format; return pd.Timestamp or NaT.
+    
+    Args:
+        val: Date string or value
+        gt_year: Ground truth year (for correcting two-digit year inference)
+    
+    Returns:
+        pd.Timestamp or pd.NaT
+    """
+    if pd.isna(val) or str(val).strip() in ("", "nan", "None"):
+        return pd.NaT
+    
+    for fmt in ("%Y-%m-%d", "%m/%d/%y", "%m/%d/%Y", "%B %d, %Y", "%b %d, %Y"):
+        try:
+            ts = pd.to_datetime(str(val).strip(), format=fmt)
+            return _two_digit_year_fix(ts, gt_year)
+        except ValueError:
+            continue
+    
+    ts = pd.to_datetime(str(val), errors="coerce")
+    return _two_digit_year_fix(ts, gt_year) if not pd.isna(ts) else ts
+
+
+def birthdate_scores(gt_val, pred_val):
+    """
+    Calculate birthdate matching scores (exact, year, month).
+    
+    Returns NaN when either value is missing to avoid penalizing
+    missing ground truth data.
+    
+    Args:
+        gt_val: Ground truth date
+        pred_val: Predicted date
+    
+    Returns:
+        Dict with keys: exact, year, month (each 0.0-1.0 or NaN)
+    """
+    nan_result = {
+        "exact": float("nan"),
+        "year": float("nan"),
+        "month": float("nan")
+    }
+    
+    gt_ts = parse_date(gt_val)
+    gt_year = gt_ts.year if not pd.isna(gt_ts) else None
+    pred_ts = parse_date(pred_val, gt_year=gt_year)
+    
+    if pd.isna(gt_ts) or pd.isna(pred_ts):
+        return nan_result
+    
+    return {
+        "exact": float(gt_ts == pred_ts),
+        "year": float(gt_ts.year == pred_ts.year),
+        "month": float(gt_ts.month == pred_ts.month),
+    }
+
+
 __all__ = [
     "EducationParser",
     "parse_education_detailed",
@@ -262,4 +347,6 @@ __all__ = [
     "SchoolNormalizer",
     "normalize_school",
     "compare_education_components",
+    "parse_date",
+    "birthdate_scores",
 ]

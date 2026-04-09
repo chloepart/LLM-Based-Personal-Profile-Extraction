@@ -8,56 +8,27 @@ NaN-aware evaluation, partial credit systems, and hierarchical matching.
 import unicodedata
 import re
 from difflib import SequenceMatcher
-import json
 import pandas as pd
+
+# Import helper functions — single source of truth
+from .parsing import parse_education, parse_committee_roles, parse_education_detailed, compare_education_components, parse_date, birthdate_scores
+from .name_utils import NameNormalizer
 
 
 # Name Matching & Normalization
 
 def normalize_name(name):
     """
-    Lowercase, strip accents, expand common nickname abbreviations.
+    Normalize name: lowercase, strip accents, expand abbreviations.
+    Delegates to NameNormalizer.normalize() to eliminate duplication.
     
     Args:
         name: Name string to normalize
-    
+        
     Returns:
         Normalized name string
     """
-    if not name or (isinstance(name, float) and pd.isna(name)):
-        return ""
-    
-    name = str(name).lower().strip()
-    
-    # Strip accents using Unicode normalization
-    name = "".join(
-        c for c in unicodedata.normalize("NFD", name)
-        if unicodedata.category(c) != "Mn"
-    )
-    
-    # Expand common nickname abbreviations
-    expansions = {
-        r"\bdan\b": "daniel",
-        r"\btom\b": "thomas",
-        r"\bjon\b": "jonathan",
-        r"\bjim\b": "james",
-        r"\bbob\b": "robert",
-        r"\bwill\b": "william",
-        r"\bliz\b": "elizabeth",
-        r"\bpat\b": "patrick",
-        r"\bbert\b": "albert",
-        r"\bted\b": "edward",
-        r"\bkatie\b": "katherine",
-        r"\bcat\b": "catherine",
-        r"\btimothy\b": "tim",
-        r"\bchristopher\b": "chris",
-        r"\banthony\b": "tony",
-    }
-    
-    for pattern, replacement in expansions.items():
-        name = re.sub(pattern, replacement, name)
-    
-    return name
+    return NameNormalizer.normalize(name, lowercase=True, remove_middle_initial=True, expand_abbreviations=True)
 
 
 def name_match_score(gt_name, pred_name):
@@ -134,87 +105,6 @@ def match_by_fuzzy_name(df_gt, df_pred):
 
 
 # Date Matching
-
-_CURRENT_YEAR = 2025  # used for two-digit year correction
-
-
-def _two_digit_year_fix(ts, gt_year=None):
-    """
-    Fix two-digit years that pandas infers incorrectly.
-    
-    pandas uses a 50-year pivot (≥50 → 1900s, <50 → 2000s) which can
-    misinterpret years. This corrects for that.
-    """
-    if pd.isna(ts):
-        return ts
-    
-    year = ts.year
-    # If pandas mapped a two-digit year to future (e.g. 2082), correct it
-    if year > _CURRENT_YEAR:
-        year -= 100
-        ts = ts.replace(year=year)
-    
-    return ts
-
-
-def parse_date(val, gt_year=None):
-    """
-    Parse a date string in any common format; return pd.Timestamp or NaT.
-    
-    Args:
-        val: Date string or value
-        gt_year: Ground truth year (for correcting two-digit year inference)
-    
-    Returns:
-        pd.Timestamp or pd.NaT
-    """
-    if pd.isna(val) or str(val).strip() in ("", "nan", "None"):
-        return pd.NaT
-    
-    for fmt in ("%Y-%m-%d", "%m/%d/%y", "%m/%d/%Y", "%B %d, %Y", "%b %d, %Y"):
-        try:
-            ts = pd.to_datetime(str(val).strip(), format=fmt)
-            return _two_digit_year_fix(ts, gt_year)
-        except ValueError:
-            continue
-    
-    ts = pd.to_datetime(str(val), errors="coerce")
-    return _two_digit_year_fix(ts, gt_year) if not pd.isna(ts) else ts
-
-
-def birthdate_scores(gt_val, pred_val):
-    """
-    Calculate birthdate matching scores (exact, year, month).
-    
-    Returns NaN when either value is missing to avoid penalizing
-    missing ground truth data.
-    
-    Args:
-        gt_val: Ground truth date
-        pred_val: Predicted date
-    
-    Returns:
-        Dict with keys: exact, year, month (each 0.0-1.0 or NaN)
-    """
-    nan_result = {
-        "exact": float("nan"),
-        "year": float("nan"),
-        "month": float("nan")
-    }
-    
-    gt_ts = parse_date(gt_val)
-    gt_year = gt_ts.year if not pd.isna(gt_ts) else None
-    pred_ts = parse_date(pred_val, gt_year=gt_year)
-    
-    if pd.isna(gt_ts) or pd.isna(pred_ts):
-        return nan_result
-    
-    return {
-        "exact": float(gt_ts == pred_ts),
-        "year": float(gt_ts.year == pred_ts.year),
-        "month": float(gt_ts.month == pred_ts.month),
-    }
-
 
 # Discrete Field Matching
 
@@ -326,206 +216,6 @@ def religion_match_score(gt_val, pred_val, religion_hierarchy=None):
     return 0.0
 
 
-# Text Parsing & Formatting
-
-def parse_education(edu_str):
-    """
-    Parse education field (JSON list or pipe-delimited) into readable text.
-    Input formats:
-      - JSON: [{'degree': 'B.A.', 'institution': 'Harvard', 'year': 2020}, ...]
-      - Pipe: "B.A.|Harvard|2020|M.A.|Stanford|2022"
-      - String: Any text
-    Output: Normalized string combining degree, institution, year
-    """
-    if pd.isna(edu_str) or not str(edu_str).strip():
-        return ""
-    
-    edu_str = str(edu_str).strip()
-    
-    # Try to parse as JSON list
-    try:
-        if edu_str.startswith("["):
-            items = json.loads(edu_str)
-            parts = []
-            for item in items:
-                if isinstance(item, dict):
-                    degree = item.get("degree", "").strip() if item.get("degree") else ""
-                    institution = item.get("institution", "").strip() if item.get("institution") else ""
-                    year = item.get("year", "")
-                    
-                    entry = " ".join(filter(None, [degree, institution, str(year) if year else ""]))
-                    if entry:
-                        parts.append(entry)
-            return " ".join(parts) if parts else edu_str
-    except (json.JSONDecodeError, TypeError):
-        pass
-    
-    # Try pipe-delimited format
-    if "|" in edu_str:
-        return edu_str.replace("|", " ")
-    
-    return edu_str
-
-
-def parse_committee_roles(roles_str):
-    """
-    Parse committee roles field (JSON list, pipe-delimited, or string).
-    Normalize to readable text by joining all roles.
-    """
-    if pd.isna(roles_str) or not str(roles_str).strip():
-        return ""
-    
-    roles_str = str(roles_str).strip()
-    
-    # Try to parse as JSON list
-    try:
-        if roles_str.startswith("["):
-            items = json.loads(roles_str)
-            if isinstance(items, list):
-                return " ".join(str(item).strip() for item in items if item)
-    except (json.JSONDecodeError, TypeError):
-        pass
-    
-    # Try pipe-delimited
-    if "|" in roles_str:
-        return roles_str.replace("|", " ")
-    
-    return roles_str
-
-
-def parse_education_detailed(edu_str):
-    """
-    Parse education into structured list of components: [(degree, institution, year), ...]
-    Used for component-level comparison (degree exact, institution fuzzy, year exact).
-    """
-    import ast
-    
-    if pd.isna(edu_str) or not str(edu_str).strip():
-        return []
-    
-    edu_str = str(edu_str).strip()
-    items = []
-    
-    # Try JSON format (handles both double-quoted and single-quoted JSON)
-    if edu_str.startswith("["):
-        # First try standard JSON
-        try:
-            parsed = json.loads(edu_str)
-        except (json.JSONDecodeError, TypeError):
-            # Fall back to ast.literal_eval for single-quoted JSON
-            try:
-                parsed = ast.literal_eval(edu_str)
-            except (ValueError, SyntaxError):
-                parsed = None
-        
-        if isinstance(parsed, list):
-            for item in parsed:
-                if isinstance(item, dict):
-                    degree = item.get("degree")
-                    institution = item.get("institution")
-                    year = item.get("year")
-                    
-                    # Only add if at least one field is non-None
-                    if degree or institution or year:
-                        items.append((
-                            str(degree).strip() if degree else "",
-                            str(institution).strip() if institution else "",
-                            str(year).strip() if year else ""
-                        ))
-            return items if items else []
-    
-    # Try pipe format: "degree1|institution1|year1|degree2|institution2|year2"
-    if "|" in edu_str:
-        parts = [p.strip() for p in edu_str.split("|")]
-        for i in range(0, len(parts), 3):
-            if i+2 < len(parts):
-                items.append((parts[i], parts[i+1], parts[i+2]))
-            elif i+1 < len(parts):
-                items.append((parts[i], parts[i+1], ""))
-            elif i < len(parts):
-                items.append((parts[i], "", ""))
-        return items
-    
-    # Fallback: treat entire string as one entry with no degree/year
-    return [("", edu_str, "")]
-
-
-def compare_education_components(gt_items, pred_items):
-    """
-    Compare education components: degree (exact), institution (fuzzy), year (exact).
-    Return: Dict with keys: degree_exact, institution_fuzzy, year_exact, combined_score
-    """
-    if not gt_items or not pred_items:
-        return {
-            "degree_exact": float("nan"),
-            "institution_fuzzy": float("nan"),
-            "year_exact": float("nan"),
-            "combined_score": float("nan"),
-        }
-    
-    def normalize_inst(s):
-        return s.lower().replace(",", "").replace("university", "u").strip()
-    
-    # Match by institution first (handles reordering)
-    matched = {}
-    for gt_idx, gt_item in enumerate(gt_items):
-        best_match_idx = -1
-        best_score = 0
-        
-        gt_inst = normalize_inst(gt_item[1])
-        for pred_idx, pred_item in enumerate(pred_items):
-            if pred_idx in matched.values():
-                continue
-            pred_inst = normalize_inst(pred_item[1])
-            
-            # Simple overlap score
-            if gt_inst and pred_inst:
-                score = SequenceMatcher(None, gt_inst, pred_inst).ratio()
-                if score > best_score:
-                    best_score = score
-                    best_match_idx = pred_idx
-        
-        if best_match_idx >= 0:
-            matched[gt_idx] = best_match_idx
-    
-    # Compute component scores
-    degree_scores = []
-    institution_scores = []
-    year_scores = []
-    
-    for gt_idx, pred_idx in matched.items():
-        gt_deg, gt_inst, gt_year = gt_items[gt_idx]
-        pred_deg, pred_inst, pred_year = pred_items[pred_idx]
-        
-        # Exact match on degree
-        if gt_deg and pred_deg:
-            degree_scores.append(float(gt_deg.lower() == pred_deg.lower()))
-        
-        # Fuzzy match on institution
-        if gt_inst and pred_inst:
-            gt_inst_norm = normalize_inst(gt_inst)
-            pred_inst_norm = normalize_inst(pred_inst)
-            ratio = SequenceMatcher(None, gt_inst_norm, pred_inst_norm).ratio()
-            institution_scores.append(1.0 if ratio > 0.8 else 0.0)
-        
-        # Exact match on year
-        if gt_year and pred_year:
-            year_scores.append(float(gt_year == pred_year))
-    
-    # Aggregate
-    result = {
-        "degree_exact": sum(degree_scores) / len(degree_scores) if degree_scores else float("nan"),
-        "institution_fuzzy": sum(institution_scores) / len(institution_scores) if institution_scores else float("nan"),
-        "year_exact": sum(year_scores) / len(year_scores) if year_scores else float("nan"),
-    }
-    
-    # Combined score: average of all components
-    all_scores = [s for s in [result["degree_exact"], result["institution_fuzzy"], result["year_exact"]] if not pd.isna(s)]
-    result["combined_score"] = sum(all_scores) / len(all_scores) if all_scores else float("nan")
-    
-    return result
-
-
 # Text Field & Component Evaluation
 
 def evaluate_text_fields(merged_df, fields, rouge_scorer, bert_scorer=None):
@@ -604,6 +294,12 @@ def evaluate_education_components(merged_df):
 
 
 __all__ = [
+    # Imported from parsing
+    "parse_education",
+    "parse_committee_roles",
+    "parse_education_detailed",
+    "compare_education_components",
+    # Defined in this module
     "normalize_name",
     "name_match_score",
     "create_normalized_senator_id",
@@ -613,10 +309,6 @@ __all__ = [
     "gender_match_score",
     "get_religion_category",
     "religion_match_score",
-    "parse_education",
-    "parse_committee_roles",
-    "parse_education_detailed",
-    "compare_education_components",
     "evaluate_text_fields",
     "evaluate_education_components",
 ]

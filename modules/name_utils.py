@@ -5,6 +5,8 @@ Consolidates duplicate name processing logic from multiple sections
 
 import re
 import unicodedata
+import pandas as pd
+
 
 
 class NameNormalizer:
@@ -171,15 +173,3 @@ class NameNormalizer:
         normalized = cls.normalize(name, lowercase=True)
         name_slug = "_".join(w for w in normalized.split() if w)
         return f"{name_slug}_{state.upper()}"
-
-
-# Optional: Import pandas for NaN checking (done in try/except to avoid hard dependency)
-try:
-    import pandas as pd
-except ImportError:
-    # Fallback for environments without pandas
-    class _PandasStub:
-        @staticmethod
-        def isna(x):
-            return x is None or (isinstance(x, float) and x != x)  # NaN check
-    pd = _PandasStub()
