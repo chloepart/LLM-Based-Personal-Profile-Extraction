@@ -92,6 +92,8 @@ from .evaluator import (
     gender_match_score,
     get_religion_category,
     religion_match_score,
+    evaluate_text_fields,
+    evaluate_education_components,
 )
 
 # NEW: Evaluation suite with caching (Phase 4)
@@ -160,7 +162,7 @@ __all__ = [
     "keyword_extract",
     "bert_extract",
     "DEFAULT_KEYWORD_MAP",
-    # evaluator (NEW)
+        # evaluator (expanded)
     "normalize_name",
     "name_match_score",
     "create_normalized_senator_id",
@@ -170,6 +172,8 @@ __all__ = [
     "gender_match_score",
     "get_religion_category",
     "religion_match_score",
+    "evaluate_text_fields",
+    "evaluate_education_components",
     # evaluation_suite (Phase 4)
     "load_and_merge_results",
     "evaluate_all_styles",

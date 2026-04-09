@@ -417,6 +417,16 @@ class PipelineConfig:
         return self.api_config.model_name
     
     @property
+    def temperature(self) -> float:
+        """Convenience accessor for temperature setting"""
+        return self.api_config.temperature
+    
+    @property
+    def max_tokens(self) -> int:
+        """Convenience accessor for max_tokens setting"""
+        return self.api_config.max_tokens
+    
+    @property
     def api_client(self):
         """Lazy-initialized API client for Groq"""
         if self._api_client is None:
@@ -472,13 +482,20 @@ class PipelineConfig:
             config_data = json.load(f)
         
         # Extract API configuration
+        # Handle both nested (model_info.name) and flat (model_name) config structures
+        model_name = config_data.get('model_name')
+        if not model_name and 'model_info' in config_data:
+            model_name = config_data['model_info'].get('name', 'mixtral-8x7b-32768')
+        if not model_name:
+            model_name = 'mixtral-8x7b-32768'
+        
         api_config = APIConfig(
             provider="groq",
             api_key=config_data.get('api_key') or os.getenv('GROQ_API_KEY'),
-            model_name=config_data.get('model_name', 'mixtral-8x7b-32768'),
+            model_name=model_name,
             max_retries=config_data.get('max_retries', 5),
-            max_tokens=config_data.get('max_tokens', 2048),
-            temperature=config_data.get('temperature', 0.0),
+            max_tokens=config_data.get('max_tokens', config_data.get('params', {}).get('max_output_tokens', 2048)),
+            temperature=config_data.get('temperature', config_data.get('params', {}).get('temperature', 0.0)),
         )
         
         rate_limit_config = RateLimitConfig(
