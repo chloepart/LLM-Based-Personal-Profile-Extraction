@@ -32,12 +32,19 @@ class NameNormalizer:
     
     # Known name variations for URL generation
     OVERRIDES = {
-        "Bernard_Sanders": "Bernie_Sanders",
+        "Bernie_Sanders": "Bernie_Sanders",
+        "Katherine_Britt": "Katie_Britt",  # Uses nickname on Wikipedia
         "Dan_Sullivan": "Daniel_Sullivan",
         "Tom_Cotton": "Thomas_Cotton",
         "Tommy_Tuberville": "Thomas_Tuberville",
         "Jon_Ossoff": "Jonathan_Ossoff",
         "Alan_Armstrong": "Alan_S._Armstrong",
+        "Charles_Grassley": "Chuck_Grassley",
+        "Charles_Schumer": "Chuck_Schumer",
+        "Richard_Durbin": "Dick_Durbin",
+        "Edward_Markey": "Ed_Markey",
+        "Christopher_Murphy": "Chris_Murphy",
+        "Michael_Crapo": "Mike_Crapo",
     }
     
     @staticmethod
@@ -49,7 +56,7 @@ class NameNormalizer:
         )
     
     @classmethod
-    def normalize(cls, name, lowercase=True, remove_middle_initial=True):
+    def normalize(cls, name, lowercase=True, remove_middle_initial=True, expand_abbreviations=True):
         """
         Normalize a name string
         
@@ -57,6 +64,7 @@ class NameNormalizer:
             name: Input name string
             lowercase: Convert to lowercase
             remove_middle_initial: Remove middle initial (e.g., "John F. Smith" → "John Smith")
+            expand_abbreviations: Expand nicknames to formal names (Katie→Katherine, etc.)
             
         Returns:
             Normalized name string
@@ -78,9 +86,10 @@ class NameNormalizer:
         if remove_middle_initial:
             norm_name = re.sub(r'\s+[A-Za-z]\.\s*', ' ', norm_name).strip()
         
-        # Expand abbreviations
-        for pattern, replacement in cls.ABBREVIATIONS.items():
-            norm_name = re.sub(pattern, replacement, norm_name)
+        # Expand abbreviations (only if requested)
+        if expand_abbreviations:
+            for pattern, replacement in cls.ABBREVIATIONS.items():
+                norm_name = re.sub(pattern, replacement, norm_name)
         
         return norm_name.strip()
     
@@ -114,14 +123,37 @@ class NameNormalizer:
     
     @classmethod
     def create_wikipedia_url(cls, name):
-        """Create Wikipedia URL for a senator"""
-        slug = cls.create_slug(name, wiki_style=True)
+        """Create Wikipedia URL for a senator with proper capitalization
+        
+        Note: Preserves nickname usage (Katie, Tom, etc.) since Wikipedia 
+        uses senators' actual names, not formal expansions.
+        """
+        # Normalize WITHOUT expanding abbreviations (Katie stays Katie, not Katherine)
+        norm_name = cls.normalize(name, lowercase=True, expand_abbreviations=False)
+        slug_lower = norm_name.replace(" ", "_")
+        
+        # Check overrides for special cases
+        for override_pattern, override_value in cls.OVERRIDES.items():
+            if override_pattern.lower() in slug_lower.lower():
+                return f"https://en.wikipedia.org/wiki/{override_value}"
+        
+        # Generate properly capitalized slug for Wikipedia
+        # Wikipedia URLs use capitalized proper names: Mark_Warner, Katie_Britt, etc.
+        capitalized_words = [word.capitalize() for word in norm_name.split()]
+        slug = "_".join(capitalized_words)
+        
         return f"https://en.wikipedia.org/wiki/{slug}"
     
     @classmethod
     def create_ballotpedia_url(cls, name):
-        """Create Ballotpedia URL for a senator"""
-        slug = cls.create_slug(name, wiki_style=False)
+        """Create Ballotpedia URL for a senator with proper capitalization"""
+        # Normalize WITHOUT expanding abbreviations
+        norm_name = cls.normalize(name, lowercase=True, expand_abbreviations=False)
+        
+        # Ballotpedia also uses actual names (e.g., Katie_Britt, not Katherine_Britt)
+        capitalized_words = [word.capitalize() for word in norm_name.split()]
+        slug = "_".join(capitalized_words)
+        
         return f"https://ballotpedia.org/{slug}"
     
     @classmethod

@@ -79,7 +79,7 @@ Step 1 - Extract full_name: Find the senator's complete name directly from the t
 Step 2 - Extract birthdate: If a full date is present, format as YYYY-MM-DD. Otherwise null.
 Step 3 - Extract birth_year_inferred: Only if birthdate is null AND a birth year or age is mentioned. Otherwise null.
 Step 4 - Extract gender: Use explicit statement OR pronouns (he/him = "male", she/her = "female", they/them = "non-binary"). Otherwise null.
-Step 5 - Extract race_ethnicity: Only if explicitly stated in the text. Do NOT infer. Otherwise null.
+Step 5 - Extract race_ethnicity: Only if explicitly stated in the text. Otherwise null. Do NOT infer.
 Step 6 - Extract education: Find all degree/institution/year entries. Return as array of objects.
 Step 7 - Extract committee_roles: Find all committee memberships and professional roles. Return as array of strings.
 Step 8 - Extract religious_affiliation: Use if explicitly stated OR inferable from organizational memberships, values language, or cultural references. Otherwise null.
@@ -106,19 +106,41 @@ TASK1_ICL = """You are a precise data extraction specialist.
 Extract the following fields from the senator profile text.
 Return ONLY valid JSON. No preamble, no markdown fences.
 
-EXAMPLE INPUT:
+EXAMPLE1 INPUT:
 Senator Jane Smith is from Ohio. She serves on the Senate Finance Committee and
 the Senate Judiciary Committee. She earned a J.D. from Harvard Law School in 1995
 and a B.A. from Ohio State University in 1992. She is known for her work on
-interfaith initiatives and has spoken at numerous Christian conferences.
+Church initiatives and has spoken at numerous Christian conferences.
 
-EXAMPLE OUTPUT:
+EXAMPLE1 OUTPUT:
 {"full_name": "Jane Smith", "birthdate": null, "birth_year_inferred": null,
  "gender": "female", "race_ethnicity": null,
  "education": [{"degree": "J.D.", "institution": "Harvard Law School", "year": 1995},
                {"degree": "B.A.", "institution": "Ohio State University", "year": 1992}],
  "committee_roles": ["Senate Finance Committee", "Senate Judiciary Committee"],
  "religious_affiliation": "Christian", "religious_affiliation_inferred": true}
+
+EXAMPLE2 INPUT:
+Senator Joe Schmoe is a Republican from Missouri. He graduated from high school in 1968 and went to 
+D'Youville College but did not graduate. He enjoys going to his local Mosque. He has served on the Agriculture Committee
+because he enjoyed cow-tipping when he was young.
+
+EXAMPLE2 OUTPUT:
+{"full_name": "Joe Schmoe", "birthdate": null, "birth_year_inferred": 1950,
+ "gender": "male", "race_ethnicity": null,
+ "education": [{"degree": null, "institution": "D'Youville College", "year": null}],
+ "committee_roles": ["Agriculture Committee"], "religious_affiliation": "Muslim", "religious_affiliation_inferred": true}
+
+EXAMPLE3 INPUT:
+Senator John Doe is a Democrat from Florida. He was born on July 4, 1979 and graduated from the 
+University of Wisconsin, earning a B.S. in Political Science in 2001. He has served on the Armed Services Committee and the Veterans' Affairs Committee.
+He enjoys celebrating Christmas and Easter with his family, but has not spoken publicly about his religious beliefs.
+
+EXAMPLE3 OUTPUT:
+{"full_name": "John Doe", "birthdate": "1979-07-04", "birth_year_inferred": null,
+ "gender": "male", "race_ethnicity": null,
+ "education": [{"degree": "B.S.", "institution": "University of Wisconsin", "year": 2001}],
+ "committee_roles": ["Armed Services Committee", "Veterans' Affairs Committee"], "religious_affiliation": null, "religious_affiliation_inferred": false}
 
 NOW EXTRACT:
 {
@@ -133,17 +155,7 @@ NOW EXTRACT:
   "religious_affiliation_inferred": boolean
 }
 
-Rules:
-- full_name: Person's complete name. Extract directly from text.
-- birthdate: Extract full date if available in YYYY-MM-DD format. Otherwise null.
-- birth_year_inferred: Only if birthdate cannot be extracted but age/birth year is mentioned. Otherwise null.
-- gender: Extract if explicitly stated OR inferable from pronouns (he/him → "male", she/her → "female", they/them → "non-binary"). Otherwise null.
-- race_ethnicity: Only if explicitly stated. Otherwise null. Do NOT infer.
-- education: Array of objects with degree, institution, year. Include all entries found.
-- committee_roles: Array of professional roles/committee memberships. Include all found.
-- religious_affiliation: Use if mentioned explicitly OR inferred from organizational memberships, values, cultural references.
-- religious_affiliation_inferred: Set to true if inferred based on signals; false if explicitly stated.
-- Never guess; return null for missing fields
+Never guess. Return null for missing fields other than religious_affiliation_inferred..
 """
 
 # Map style strings to prompts
@@ -274,11 +286,11 @@ NAME_RE = re.compile(r"\bSenator\s+([A-Z][a-z]+(?:\s+[A-Z]\.?)?\s+[A-Z][a-z]+)")
 PARTY_KEYWORD_RE = re.compile(r"\b(Republican|Democrat|Democratic|Independent)\b", re.IGNORECASE)
 
 REGEX_PATTERNS = {
-    'email': EMAIL_RE,
-    'phone': PHONE_RE,
-    'year': YEAR_RE,
-    'name': NAME_RE,
-    'party': PARTY_KEYWORD_RE,
+    'EMAIL_RE': EMAIL_RE,
+    'PHONE_RE': PHONE_RE,
+    'YEAR_RE': YEAR_RE,
+    'NAME_RE': NAME_RE,
+    'PARTY_KEYWORD_RE': PARTY_KEYWORD_RE,
 }
 
 
