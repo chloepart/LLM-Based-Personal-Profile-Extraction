@@ -29,6 +29,11 @@ from .html_processing import (
     extract_infobox,
 )
 
+from .api import (
+    call_groq,
+    run_pipeline,
+)
+
 # NEW: Parsing utilities (consolidates 3 variants into single module)
 from .parsing import (
     EducationParser,
