@@ -94,6 +94,24 @@ from .evaluator import (
     religion_match_score,
 )
 
+# NEW: Evaluation suite with caching (Phase 4)
+from .evaluation_suite import (
+    load_and_merge_results,
+    evaluate_all_styles,
+    print_evaluation_summary,
+)
+
+# NEW: Session initialization (Phase 2)
+from .session_init import (
+    initialize_pipeline_session,
+)
+
+# NEW: Pipeline orchestration (Phase 3)
+from .pipeline_runner import (
+    run_main_pipeline,
+    run_baselines,
+)
+
 __all__ = [
     # config_unified
     "PATHS",
@@ -152,4 +170,13 @@ __all__ = [
     "gender_match_score",
     "get_religion_category",
     "religion_match_score",
+    # evaluation_suite (Phase 4)
+    "load_and_merge_results",
+    "evaluate_all_styles",
+    "print_evaluation_summary",
+    # session_init (Phase 2)
+    "initialize_pipeline_session",
+    # pipeline_runner (Phase 3)
+    "run_main_pipeline",
+    "run_baselines",
 ]
