@@ -11,6 +11,7 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 import time
+import yaml
 import re
 import os
 import logging
@@ -215,14 +216,18 @@ def scrape_wikipedia(url, name):
         if not result["birthdate"]:
             for p in soup.find_all("p"):
                 text = p.get_text()
-                # Look for common birth patterns like "born Month DD, YYYY" or "born (Month DD, YYYY)"
+                # Try full date first
                 birth_match = re.search(
                     r'born\s+(?:\()?(\w+\s+\d{1,2},?\s+\d{4})(?:\))?',
-                    text,
-                    re.IGNORECASE
+                    text, re.IGNORECASE
                 )
                 if birth_match:
                     result["birthdate"] = normalize_birthdate(birth_match.group(1))
+                    break
+                # Year-only fallback
+                year_match = re.search(r'born\s+(?:in\s+)?(\d{4})', text, re.IGNORECASE)
+                if year_match:
+                    result["birthdate"] = year_match.group(1)
                     break
         
         # If gender not found in infobox, check first paragraph for pronouns
@@ -258,6 +263,11 @@ def _extract_infobox_data(infobox_table, name, result):
     Returns:
         Updated result dict with extracted values
     """
+
+    bday = infobox_table.find("span", {"class": "bday"})
+    if bday:
+        result["birthdate"] = bday.get_text(strip=True)  # already YYYY-MM-DD
+
     rows = infobox_table.find_all("tr")
     
     for row in rows:
@@ -278,19 +288,20 @@ def _extract_infobox_data(infobox_table, name, result):
         # ── BIRTHDATE EXTRACTION (multiple patterns) ────────────────────
         # Pattern 1: "Born" or "Birth date" labels
         if any(pattern in label for pattern in ["born", "birth date", "birthdate", "date of birth", "b."]):
-            # Extract first date-like pattern from value
-            # Handles: "Month DD, YYYY", "DD Month YYYY", "YYYY-MM-DD", "(Month DD, YYYY)"
-            date_patterns = [
-                r'(\w+\s+\d{1,2},?\s+\d{4})',  # Month DD, YYYY or Month DD YYYY
-                r'(\d{1,2}\s+\w+\s+\d{4})',     # DD Month YYYY
-                r'(\d{4}-\d{2}-\d{2})',          # YYYY-MM-DD
-            ]
-            
-            for pattern in date_patterns:
-                date_match = re.search(pattern, value)
-                if date_match:
-                    result["birthdate"] = normalize_birthdate(date_match.group(1))
-                    break
+            if not result["birthdate"]:
+                # Extract first date-like pattern from value
+                # Handles: "Month DD, YYYY", "DD Month YYYY", "YYYY-MM-DD", "(Month DD, YYYY)"
+                date_patterns = [
+                    r'(\w+\s+\d{1,2},?\s+\d{4})',  # Month DD, YYYY or Month DD YYYY
+                    r'(\d{1,2}\s+\w+\s+\d{4})',     # DD Month YYYY
+                    r'(\d{4}-\d{2}-\d{2})',          # YYYY-MM-DD
+                ]
+                
+                for pattern in date_patterns:
+                    date_match = re.search(pattern, value)
+                    if date_match:
+                        result["birthdate"] = normalize_birthdate(date_match.group(1))
+                        break
         
         # ── GENDER EXTRACTION ──────────────────────────────────────────
         # Pattern 1: Explicit "Gender" or "Sex" label
@@ -315,63 +326,148 @@ def _extract_infobox_data(infobox_table, name, result):
 # Validation function removed — V1 scraper uses session-year targeting (2025-2026) instead
 
 
-def scrape_ballotpedia(url, name):
+def _extract_committees_from_soup(soup):
     """
-    Scrape Ballotpedia for a senator's committee assignments.
-    Uses session-year targeting (2025-2026) for focused extraction.
+    Extract committee assignments from a BeautifulSoup object.
+    Finds "Committee assignments" heading, traverses to "2025-2026" session year,
+    and collects all committee list items.
     
     Args:
-        url: Ballotpedia URL for the senator
-        name: Senator's name for logging
+        soup: BeautifulSoup object of parsed Ballotpedia page
         
     Returns:
-        dict with key: committee_roles (pipe-delimited string)
-        On failure, committee_roles is set to None
+        dict with keys:
+            - committees: list of committee strings
+            - session_year_found: str ("2025-2026") or None
+            - status: str describing extraction result
     """
     result = {
-        "committee_roles": None
+        "committees": [],
+        "session_year_found": None,
+        "status": "unknown"
     }
     
-    try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
-        }
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()
-        
-        soup = BeautifulSoup(response.content, "html.parser")
-        
-        # Find "Committee assignments" h2
-        committee_heading = None
-        for h in soup.find_all("h2"):
-            if "committee assignments" in h.get_text().lower():
-                committee_heading = h
-                break
-
-        if committee_heading:
-            # Look for session year heading (h4)
-            current = committee_heading.find_next("h4")
-            while current:
-                if "2025-2026" in current.get_text():
-                    committee_roles = []
-                    sib = current.find_next()
-                    # Extract all list items until next h4/h3/h2
-                    while sib and sib.name not in ["h4", "h3", "h2"]:
-                        if sib.name == "li":
-                            text = sib.get_text(strip=True)
-                            if text:
-                                committee_roles.append(text)
-                        sib = sib.find_next()
-                    if committee_roles:
-                        result["committee_roles"] = "|".join(committee_roles)
-                    break
-                current = current.find_next("h4")
-        
-    except Exception as e:
-        logging.warning(f"Ballotpedia scrape failed for {name}: {str(e)}")
+    # Find "Committee assignments" h2
+    committee_heading = None
+    for h in soup.find_all("h2"):
+        if "committee assignments" in h.get_text().lower():
+            committee_heading = h
+            break
+    
+    if not committee_heading:
+        result["status"] = "no_committee_heading_found"
+        return result
+    
+    # Look for session year heading (h4)
+    current = committee_heading.find_next("h4")
+    while current:
+        heading_text = current.get_text()
+        if "2025-2026" in heading_text:
+            result["session_year_found"] = "2025-2026"
+            sib = current.find_next()
+            # Extract all list items until next h4/h3/h2
+            while sib and sib.name not in ["h4", "h3", "h2"]:
+                if sib.name == "li":
+                    text = sib.get_text(strip=True)
+                    if text:
+                        result["committees"].append(text)
+                sib = sib.find_next()
+            break
+        current = current.find_next("h4")
+    
+    if not result["session_year_found"]:
+        result["status"] = "session_year_2025-2026_not_found"
+    else:
+        result["status"] = "success" if result["committees"] else "session_found_but_no_committees"
     
     return result
 
+
+def load_committees_from_yaml(yaml_path, senator_names=None):
+    """
+    senator_names: optional list of names from your CSV to fuzzy-match against
+    """
+    import yaml
+    from rapidfuzz import process, fuzz
+
+    with open(yaml_path, "r") as f:
+        data = yaml.safe_load(f)
+
+    # Build raw name -> pipe-delimited committees
+    senator_committees = {}
+    for committee_id, members in data.items():
+        if not isinstance(members, list):
+            continue
+        for member in members:
+            name = member.get("name")
+            if not name:
+                continue
+            if name not in senator_committees:
+                senator_committees[name] = []
+            entry = committee_id
+            if member.get("title"):
+                entry = f"{committee_id} ({member['title']})"
+            senator_committees[name].append(entry)
+
+    raw_map = {name: "|".join(c) for name, c in senator_committees.items()}
+
+    # If no senator_names provided, return raw map
+    if not senator_names:
+        return raw_map
+
+    # Fuzzy match your CSV names against YAML names
+    yaml_names = list(raw_map.keys())
+    matched_map = {}
+    for name in senator_names:
+        result = process.extractOne(name, yaml_names, scorer=fuzz.token_sort_ratio)
+        if result and result[1] >= 85:
+            matched_map[name] = raw_map[result[0]]
+        else:
+            logging.warning(f"No committee match for {name} (best score: {result[1] if result else 0})")
+            matched_map[name] = None
+
+    return matched_map
+
+
+def build_committee_lookup(committees_yaml_path):
+    """
+    Build a thomas_id -> full name lookup from committees-current.yaml.
+    Covers both full committees and subcommittees.
+    """
+    import yaml
+    with open(committees_yaml_path, "r") as f:
+        data = yaml.safe_load(f)
+
+    lookup = {}
+    for committee in data:
+        tid = committee.get("thomas_id")
+        name = committee.get("name")
+        if tid and name:
+            lookup[tid] = name
+        for sub in committee.get("subcommittees", []):
+            sub_id = tid + sub["thomas_id"].zfill(2)
+            lookup[sub_id] = sub["name"]
+
+    return lookup
+
+
+def resolve_committee_roles(committee_roles_str, lookup):
+    """
+    Convert pipe-delimited committee IDs to readable names.
+    e.g. "SSEG|SSEG01 (Ranking Member)" -> "Senate Committee on Energy and Natural Resources|Energy (Ranking Member)"
+    """
+    if not committee_roles_str:
+        return None
+
+    resolved = []
+    for entry in committee_roles_str.split("|"):
+        parts = entry.split(" (", 1)
+        code = parts[0].strip()
+        role = f" ({parts[1]}" if len(parts) > 1 else ""
+        name = lookup.get(code, code)  # fall back to raw code if not found
+        resolved.append(name + role)
+
+    return "|".join(resolved)
 
 def test_committee_scraping(url, name, verbose=True):
     """
@@ -403,60 +499,31 @@ def test_committee_scraping(url, name, verbose=True):
         response.raise_for_status()
         
         soup = BeautifulSoup(response.content, "html.parser")
-        committees = []
+        extraction_result = _extract_committees_from_soup(soup)
         
-        # Find "Committee assignments" h2
-        committee_heading = None
-        for h in soup.find_all("h2"):
-            if "committee assignments" in h.get_text().lower():
-                committee_heading = h
-                break
+        # Merge extraction results into debug dict
+        result["status"] = extraction_result["status"]
+        result["session_year_found"] = extraction_result["session_year_found"]
+        result["committees"] = extraction_result["committees"]
+        result["committee_count"] = len(extraction_result["committees"])
         
-        if not committee_heading:
-            result["status"] = "no_committee_heading_found"
-            if verbose:
-                print(f"✗ {name}: No 'Committee assignments' heading found")
-            return result
-        
-        # Look for session year heading (h4)
-        current = committee_heading.find_next("h4")
-        while current:
-            heading_text = current.get_text()
-            if "2025-2026" in heading_text:
-                result["session_year_found"] = "2025-2026"
-                sib = current.find_next()
-                # Extract all list items until next h4/h3/h2
-                while sib and sib.name not in ["h4", "h3", "h2"]:
-                    if sib.name == "li":
-                        text = sib.get_text(strip=True)
-                        if text:
-                            committees.append(text)
-                    sib = sib.find_next()
-                break
-            current = current.find_next("h4")
-        
-        if not result["session_year_found"]:
-            result["status"] = "session_year_2025-2026_not_found"
-            if verbose:
-                print(f"⚠️  {name}: Found Committee assignments but no 2025-2026 session year")
-            return result
-        
-        result["committees"] = committees
-        result["committee_count"] = len(committees)
-        result["status"] = "success" if committees else "session_found_but_no_committees"
-        
+        # Print verbose output if requested
         if verbose:
-            if committees:
+            if result["status"] == "no_committee_heading_found":
+                print(f"✗ {name}: No 'Committee assignments' heading found")
+            elif result["status"] == "session_year_2025-2026_not_found":
+                print(f"⚠️  {name}: Found Committee assignments but no 2025-2026 session year")
+            elif result["status"] == "success":
                 print(f"✓ {name}")
                 print(f"  Session year: {result['session_year_found']}")
                 print(f"  Found {result['committee_count']} committees")
                 if result['committee_count'] <= 5:
-                    for c in committees:
+                    for c in result["committees"]:
                         print(f"    • {c[:80]}")
                 else:
-                    print(f"    • {committees[0][:80]}")
+                    print(f"    • {result['committees'][0][:80]}")
                     print(f"    ... and {result['committee_count']-1} more")
-            else:
+            elif result["status"] == "session_found_but_no_committees":
                 print(f"⚠️  {name}: Session year found but no committee list items")
         
     except Exception as e:
@@ -584,12 +651,9 @@ def detect_religion_signal(wiki_text, religion):
         "unitarian universalist", "quaker", "mennonite",
         
         # Religious actions / associations
-        "attends", "member of", "belongs to", "practicing",
-        "believes", "faith", "denomination", "denomination of",
-        "ordained", "reverend", "rabbi", "priest", "imam",
-        "minister", "pastor", "bishop", "cardinal",
-        "raised", "confirmed", "baptized", "convert", "conversion",
-        "religious", "devout", "pious", "faithful",
+        "faith", "denomination", "ordained", "reverend", "rabbi", "priest", 
+        "imam", "pastor", "bishop", "cardinal", "confirmed", "baptized", 
+        "convert", "conversion", "religious", "devout", "pious", "faithful",
         
         # Religious education / organization
         "theological", "seminary", "divinity school",

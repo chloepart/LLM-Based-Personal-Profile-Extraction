@@ -314,8 +314,6 @@ def religion_match_score(gt_val, pred_val, religion_hierarchy=None):
     # No match
     return 0.0
 
-
-
 # ═══════════════════════════════════════════════════════════════════════════
 # BIRTHDATE MATCHING
 # ═══════════════════════════════════════════════════════════════════════════
@@ -394,6 +392,10 @@ def evaluate_text_fields(merged_df, fields, rouge_scorer, bert_scorer=None):
     return results
 
 
+
+SCORE_KEYS = {"degree_exact", "institution_fuzzy", "year_exact", "combined_score"}
+
+
 def evaluate_education_components(merged_df):
     """
     Compute component-level education scores (degree, institution, year).
@@ -401,7 +403,7 @@ def evaluate_education_components(merged_df):
     Returns
     -------
     dict: { "degree_exact": float, "institution_fuzzy": float,
-            "year_exact": float, "combined_score": float, "n": int }
+            "year_exact": float, "combined_score": float, "n_gt": int }
     """
     buckets = {"degree_exact": [], "institution_fuzzy": [], "year_exact": [], "combined_score": []}
 
@@ -410,16 +412,19 @@ def evaluate_education_components(merged_df):
             gt_items   = parse_education_detailed(row.get("education_text", "") or "")
             pred_items = parse_education_detailed(row.get("education", "") or "")
             result     = compare_education_components(gt_items, pred_items)
+        
             for key, val in result.items():
+                if key not in SCORE_KEYS:
+                    continue
                 if not pd.isna(val):
                     buckets[key].append(val)
-        except Exception:
-            pass
+        except Exception as e:
+            logging.warning(f"Education component scoring failed for row: {e}")
 
     return {
         k: (sum(v) / len(v) if v else float("nan"))
         for k, v in buckets.items()
-    } | {"n": len(buckets["combined_score"])}
+    } | {"n_gt": len(buckets["combined_score"])}
 
 
 __all__ = [

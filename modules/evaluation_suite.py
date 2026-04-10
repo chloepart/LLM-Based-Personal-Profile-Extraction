@@ -278,10 +278,14 @@ def _evaluate_style(
     # Education evaluation (ROUGE + BERT + component breakdown)
     # ─────────────────────────────────────────────────────────────────────
     
-    if "education" in merged.columns and "education_text" in merged.columns:
+    # After GT+pred merge, GT education may be suffixed as "education_x" or remain "education_text"
+    gt_edu_col   = next((c for c in ["education_text", "education_x", "education"] if c in merged.columns), None)
+    pred_edu_col = next((c for c in ["education_y",    "education"]                if c in merged.columns and c != gt_edu_col), None)
+
+    if gt_edu_col and pred_edu_col:
         # Define field specifications for evaluate_text_fields
         education_fields = [
-            ("education", "education_text", "education", parse_education)
+            ("education", gt_edu_col, pred_edu_col, parse_education)
         ]
         
         # Call evaluate_text_fields for batched ROUGE + BERT scoring
@@ -297,13 +301,17 @@ def _evaluate_style(
                 style_results["metrics"]["education_bert"] = float(ed["bertscore_f1"])
         
         # Call evaluate_education_components for per-component breakdown
-        comp_results = evaluate_education_components(merged)
+        # Pass a view with standardised column names the evaluator expects
+        edu_merged = merged.rename(columns={gt_edu_col: "education_text", pred_edu_col: "education"})
+        comp_results = evaluate_education_components(edu_merged)
         
-        # Surface all component metrics
+        # Surface all component metrics (n_gt is a count, not a score — stored separately)
         for component_key in ["degree_exact", "institution_fuzzy", "year_exact", "combined_score"]:
             value = comp_results.get(component_key)
-            if not pd.isna(value):
+            if value is not None and not pd.isna(value):
                 style_results["metrics"][f"education_component_{component_key}"] = float(value)
+        if comp_results.get("n_gt"):
+            style_results["education_component_n_gt"] = int(comp_results["n_gt"])
         
 
     # ─────────────────────────────────────────────────────────────────────
@@ -402,9 +410,12 @@ def print_evaluation_summary(results: Dict[str, Any]) -> None:
                 print(f"Rouge-1    — {label:25s}: {metrics[field]:.3f}")
         
         # ────── BERT Score ──────
-        for field in ["education_bert"]:
+        bert_field_labels = {
+            "education_bert": "education",
+            "committee_roles_bert": "committee roles",
+        }
+        for field, label in bert_field_labels.items():
             if field in metrics and pd.notna(metrics[field]):
-                label = "education"
                 print(f"BERT score — {label:25s}: F1={metrics[field]:.3f}")
         
         # ────── Education Components ──────
@@ -425,5 +436,60 @@ def print_evaluation_summary(results: Dict[str, Any]) -> None:
                 print(f"  {signal:20s}: {pct:6.2f}%  (n={n})")
         
         print()
+    
+    # ────── Cross-Style Comparison ──────
+    CROSS_STYLE_METRICS = [
+        "name_exact",
+        "gender_exact",
+        "religion_hierarchical",
+        "birthdate_exact",
+        "birthdate_year",
+        "education_rouge1",
+        "education_bert",
+        "committee_roles_rouge1",
+        "committee_roles_bert",
+    ]
+
+    PERCENT_METRICS = {
+        "name_exact", "gender_exact", "religion_hierarchical",
+        "birthdate_exact", "birthdate_year",
+        "education_rouge1", "committee_roles_rouge1",
+    }
+
+    rows = {}
+    for style, style_results in results.get("by_style", {}).items():
+        metrics = style_results.get("metrics", {})
+        rows[style] = {m: metrics.get(m) for m in CROSS_STYLE_METRICS}
+
+    if rows:
+        df_cross = pd.DataFrame(rows).T  # styles as rows, metrics as columns
+        df_cross = df_cross.dropna(axis=1, how="all")  # drop metrics with no data
+
+        # Format for display
+        df_display = df_cross.copy()
+        for col in df_display.columns:
+            if col in PERCENT_METRICS:
+                df_display[col] = df_display[col].map(
+                    lambda x: f"{x*100:.2f}%" if pd.notna(x) else "—"
+                )
+            else:
+                df_display[col] = df_display[col].map(
+                    lambda x: f"{x:.3f}" if pd.notna(x) else "—"
+                )
+
+        print("\n" + "─" * 90)
+        print(" CROSS-STYLE COMPARISON")
+        print("─" * 90)
+        print(df_display.to_string())
+
+        # Best style per metric
+        print("\n── Best Style Per Metric ──")
+        for col in df_cross.columns:
+            col_vals = df_cross[col].dropna()
+            if not col_vals.empty:
+                best_style = col_vals.idxmax()
+                best_val = col_vals.max()
+                fmt = f"{best_val*100:.2f}%" if col in PERCENT_METRICS else f"{best_val:.3f}"
+                print(f"  {col:30s}: {best_style} ({fmt})")
     
     print("=" * 90 + "\n")

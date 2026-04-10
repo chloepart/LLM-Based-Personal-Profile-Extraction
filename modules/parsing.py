@@ -183,72 +183,231 @@ def normalize_degree(deg):
 
 
 class SchoolNormalizer:
-    """Normalize school names for fuzzy matching."""
-    
-    @staticmethod
-    def normalize(school):
-        """Normalize school names for fuzzy matching."""
+    """Normalize school names for fuzzy matching, with canonical alias resolution."""
+
+    # Canonical alias map: common variants → canonical form used for comparison.
+    # Keys are lowercased; values are the normalized canonical string.
+    ALIASES = {
+        # Abbreviations
+        "mit":          "massachusetts institute technology",
+        "ucla":         "california los angeles",
+        "usc":          "southern california",
+        "unc":          "north carolina chapel hill",
+        "unc chapel hill": "north carolina chapel hill",
+        "nc state":     "north carolina state",
+        "ohio state":   "ohio state",
+        "uva":          "virginia",
+        "uw":           "washington",
+        "cu":           "columbia",
+        "bu":           "boston",
+        "bc":           "boston college",
+        "nyu":          "new york",
+        "lsu":          "louisiana state",
+        "tcu":          "texas christian",
+        "smu":          "southern methodist",
+        "tamu":         "texas a&m",
+        "texas a&m":    "texas a&m",
+        "a&m":          "texas a&m",
+        "psu":          "penn state",
+        "penn state":   "penn state",
+        "fsu":          "florida state",
+        "asu":          "arizona state",
+        "csu":          "colorado state",
+        "vcu":          "virginia commonwealth",
+        "gmu":          "george mason",
+        "gwu":          "george washington",
+        "georgetown":   "georgetown",
+
+        # Ivy League variants
+        "harvard":      "harvard",
+        "yale":         "yale",
+        "princeton":    "princeton",
+        "columbia":     "columbia",
+        "penn":         "pennsylvania",
+        "upenn":        "pennsylvania",
+        "dartmouth":    "dartmouth",
+        "brown":        "brown",
+        "cornell":      "cornell",
+
+        # Common misspellings / shorthand
+        "u of michigan":    "michigan",
+        "u michigan":       "michigan",
+        "u of florida":     "florida",
+        "u florida":        "florida",
+        "u of texas":       "texas austin",
+        "ut austin":        "texas austin",
+        "u of chicago":     "chicago",
+        "u chicago":        "chicago",
+        "u of illinois":    "illinois",
+        "u illinois":       "illinois",
+    }
+
+    # Stop words stripped before comparison.
+    # "institute" intentionally excluded — kept so "Massachusetts Institute of Technology"
+    # strips to "massachusetts institute technology", matching the MIT alias canonical form.
+    STOP_WORDS = {
+        "university", "college", "school", "institution",
+        "of", "the", "at", "and", "&",
+    }
+
+    @classmethod
+    def normalize(cls, school):
+        """
+        Normalize a school name:
+          1. Lowercase + strip punctuation
+          2. Resolve alias if found
+          3. Strip stop words
+        """
         if not school or pd.isna(school):
             return ""
-        school = str(school).lower().strip()
-        # Remove common suffixes
-        for suffix in ["university", "college", "school", "institute", "of", "the"]:
-            school = school.replace(suffix, "").strip()
-        return school
+
+        s = str(school).lower().strip()
+        s = s.replace(".", "").replace(",", "")
+
+        # Alias lookup (exact key match after lowercasing)
+        if s in cls.ALIASES:
+            return cls.ALIASES[s]
+
+        # Partial alias lookup (for cases like "university of michigan" → key "u of michigan" won't match)
+        # Strip stop words first, then check aliases
+        tokens = [t for t in s.split() if t not in cls.STOP_WORDS]
+        stripped = " ".join(tokens)
+
+        if stripped in cls.ALIASES:
+            return cls.ALIASES[stripped]
+
+        return stripped
 
 
 def normalize_school(school):
     """Backward compatibility wrapper for SchoolNormalizer."""
     return SchoolNormalizer.normalize(school)
 
+def _score_single_education_pair(gt_item, pred_item):
+    """
+    Score one GT education entry against one predicted entry.
+    Returns dict: {degree_exact, institution_fuzzy, year_exact, combined}
+    Each component is 0.0, 1.0, or NaN if both sides are missing.
+    """
+    # ── Degree ───────────────────────────────────────────────────────────────
+    gt_deg  = DegreeNormalizer.normalize(gt_item.get("degree") or "")
+    pred_deg = DegreeNormalizer.normalize(pred_item.get("degree") or "")
+
+    if gt_deg and pred_deg:
+        degree_score = float(gt_deg == pred_deg)
+    elif not gt_deg and not pred_deg:
+        degree_score = float("nan")
+    else:
+        degree_score = 0.0  # One side present, other missing → extraction failure
+
+    # ── Institution ──────────────────────────────────────────────────────────
+    gt_school   = SchoolNormalizer.normalize(gt_item.get("institution") or "")
+    pred_school = SchoolNormalizer.normalize(pred_item.get("institution") or "")
+
+    if gt_school and pred_school:
+        institution_score = (
+            1.0 if (
+                gt_school == pred_school
+                or gt_school in pred_school
+                or pred_school in gt_school
+                or SequenceMatcher(None, gt_school, pred_school).ratio() > 0.80
+            ) else 0.0
+        )
+    elif not gt_school and not pred_school:
+        institution_score = float("nan")
+    else:
+        institution_score = 0.0
+
+    # ── Year ─────────────────────────────────────────────────────────────────
+    gt_year   = str(gt_item.get("year") or "").strip()
+    pred_year = str(pred_item.get("year") or "").strip()
+
+    if gt_year and pred_year:
+        year_score = float(gt_year == pred_year)
+    elif not gt_year and not pred_year:
+        year_score = float("nan")
+    else:
+        year_score = 0.0
+
+    # ── Combined: mean of non-NaN components ────────────────────────────────
+    components = [s for s in [degree_score, institution_score, year_score]
+                  if not (isinstance(s, float) and s != s)]  # exclude NaN
+    combined = sum(components) / len(components) if components else float("nan")
+
+    return {
+        "degree_exact":      degree_score,
+        "institution_fuzzy": institution_score,
+        "year_exact":        year_score,
+        "combined":          combined,
+    }
+
 
 def compare_education_components(gt_items, pred_items):
     """
-    Compare education detail by detail: degree, institution, year.
-    Returns dict with per-component match counts and a combined score.
-    """
-    if not gt_items or not pred_items:
-        return {
-            "degree_exact": float("nan"),
-            "institution_fuzzy": float("nan"),
-            "year_exact": float("nan"),
-            "combined_score": float("nan")
+    Compare all GT education entries against predictions using best-match alignment.
+
+    Strategy:
+      For each GT degree, find the best-matching prediction (highest combined score).
+      Average those best-match scores across all GT degrees.
+      This penalizes missed degrees (GT entry with no good pred match → 0.0)
+      while not penalizing the model for extracting extra degrees.
+
+    Args:
+        gt_items:   List of dicts from parse_education_detailed (ground truth)
+        pred_items: List of dicts from parse_education_detailed (model output)
+
+    Returns:
+        dict: {
+            degree_exact:      float,  # avg across GT degrees
+            institution_fuzzy: float,  # avg across GT degrees
+            year_exact:        float,  # avg across GT degrees
+            combined_score:    float,  # avg combined per GT degree
+            n_gt:              int,    # number of GT degrees evaluated
         }
-    
-    # Simple matching: compare first degree from each
-    degree_matches = 0
-    school_matches = 0
-    year_matches = 0
-    
-    # Compare degrees
-    if gt_items[0].get("degree") and pred_items[0].get("degree"):
-        gt_deg = DegreeNormalizer.normalize(gt_items[0]["degree"])
-        pred_deg = DegreeNormalizer.normalize(pred_items[0]["degree"])
-        degree_matches = float(gt_deg == pred_deg)
-    
-    # Compare institutions (fuzzy)
-    if gt_items[0].get("institution") and pred_items[0].get("institution"):
-        gt_school = SchoolNormalizer.normalize(gt_items[0]["institution"])
-        pred_school = SchoolNormalizer.normalize(pred_items[0]["institution"])
-        # Fuzzy match via substring or SequenceMatcher
-        school_matches = 1.0 if (gt_school in pred_school or pred_school in gt_school or
-                                 SequenceMatcher(None, gt_school, pred_school).ratio() > 0.80) else 0.0
-    
-    # Compare years
-    if gt_items[0].get("year") and pred_items[0].get("year"):
-        gt_year = str(gt_items[0]["year"]).strip()
-        pred_year = str(pred_items[0]["year"]).strip()
-        year_matches = float(gt_year == pred_year)
-    
-    # Combined: average of the three
-    components = [degree_matches, school_matches, year_matches]
-    combined = sum(components) / len(components) if components else float("nan")
-    
+    """
+    nan_result = {
+        "degree_exact":      float("nan"),
+        "institution_fuzzy": float("nan"),
+        "year_exact":        float("nan"),
+        "combined_score":    float("nan"),
+        "n_gt":              0,
+    }
+
+    if not gt_items or not pred_items:
+        return nan_result
+
+    degree_scores      = []
+    institution_scores = []
+    year_scores        = []
+    combined_scores    = []
+
+    for gt_item in gt_items:
+        # Score this GT entry against every prediction, keep the best
+        candidate_scores = [
+            _score_single_education_pair(gt_item, pred_item)
+            for pred_item in pred_items
+        ]
+
+        best = max(candidate_scores, key=lambda x: (
+            x["combined"] if not (isinstance(x["combined"], float) and x["combined"] != x["combined"])
+            else -1.0
+        ))
+
+        # If no prediction came close, combined will be 0.0 — that's correct (penalize miss)
+        degree_scores.append(best["degree_exact"] if not _is_nan(best["degree_exact"]) else 0.0)
+        institution_scores.append(best["institution_fuzzy"] if not _is_nan(best["institution_fuzzy"]) else 0.0)
+        year_scores.append(best["year_exact"] if not _is_nan(best["year_exact"]) else 0.0)
+        combined_scores.append(best["combined"] if not _is_nan(best["combined"]) else 0.0)
+
+    def _avg(lst):
+        return sum(lst) / len(lst) if lst else float("nan")
+
     return {
-        "degree_exact": degree_matches,
-        "institution_fuzzy": school_matches,
-        "year_exact": year_matches,
-        "combined_score": combined
+        "degree_exact":      _avg(degree_scores),
+        "institution_fuzzy": _avg(institution_scores),
+        "year_exact":        _avg(year_scores),
+        "combined_score":    _avg(combined_scores),
+        "n_gt":              len(gt_items),
     }
 
 
