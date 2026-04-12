@@ -11,8 +11,8 @@ from difflib import SequenceMatcher
 import pandas as pd
 
 # Import helper functions — single source of truth
-from .parsing import parse_education, parse_committee_roles, parse_education_detailed, compare_education_components, parse_date, birthdate_scores
-from .name_utils import NameNormalizer
+from ..utils.parsing import parse_education, parse_committee_roles, parse_education_detailed, compare_education_components, parse_date, birthdate_scores
+from ..utils.names import NameNormalizer
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -361,7 +361,13 @@ def evaluate_text_fields(merged_df, fields, rouge_scorer, bert_scorer=None):
     -------
     dict: { field_name: { "rouge1": float, "bertscore_f1": float | None, "n": int } }
     """
-    import bert_score as bs
+    bs = None
+    if bert_scorer is not None:
+        try:
+            import bert_score as bs
+        except ImportError:
+            print("⚠ BERTScore not available (missing dependencies like matplotlib)")
+            bert_scorer = None
 
     results = {}
     for field, gt_col, pred_col, parse_fn in fields:
@@ -383,7 +389,7 @@ def evaluate_text_fields(merged_df, fields, rouge_scorer, bert_scorer=None):
         ) / len(gt_list)
 
         bert_f1 = None
-        if bert_scorer is not None:
+        if bert_scorer is not None and bs is not None:
             _, _, F = bs.score(list(pred_list), list(gt_list), lang="en", verbose=False)
             bert_f1 = F.mean().item()
 

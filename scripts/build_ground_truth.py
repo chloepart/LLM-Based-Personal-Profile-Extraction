@@ -18,7 +18,7 @@ from pathlib import Path
 import pandas as pd
 import time
 import re
-from modules.groundtruth import WIKI_URL_OVERRIDES
+from modules.data.groundtruth import WIKI_URL_OVERRIDES
 
 logging.basicConfig(
     level=logging.WARNING,
@@ -49,6 +49,7 @@ def get_senator_urls_from_html_dir(html_dir):
         ballotpedia_url = "https://ballotpedia.org/" + name.replace(" ", "_") + "_(U.S._Senate)"
 
         senators.append({
+            "senator_id": raw,
             "name": name,
             "wiki_url": wiki_url,
             "ballotpedia_url": ballotpedia_url,
@@ -74,7 +75,7 @@ def build_ground_truth(html_dir, pew_path, output_path, committee_yaml_path,
         DataFrame with columns: name, full_name, birthdate, gender,
                                 race_ethnicity, committee_roles, religion
     """
-    from modules.groundtruth import (
+    from modules.data.groundtruth import (
         scrape_wikipedia, merge_pew, normalize_birthdate,
         load_committees_from_yaml, build_committee_lookup, resolve_committee_roles,
         WIKI_URL_OVERRIDES
@@ -124,6 +125,7 @@ def build_ground_truth(html_dir, pew_path, output_path, committee_yaml_path,
             wiki_data["birthdate"] = normalize_birthdate(wiki_data["birthdate"])
 
         rows.append({
+            "senator_id": senator_info["senator_id"],
             "name": name,
             "full_name": wiki_data.get("full_name"),
             "birthdate": wiki_data.get("birthdate"),

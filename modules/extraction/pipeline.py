@@ -14,10 +14,10 @@ from typing import List, Dict, Any
 import pandas as pd
 from tqdm.notebook import tqdm
 
-from .api import run_pipeline, call_groq
-from .html_processing import extract_readable_text
-from .baselines import regex_extract, spacy_extract, keyword_extract
-from .config_unified import T1_FIELDS, REGEX_PATTERNS
+from ..api.groq import call_groq, run_pipeline
+from ..data.html import extract_readable_text
+from ..evaluation.baselines import regex_extract, spacy_extract, keyword_extract
+from ..config.config_unified import T1_FIELDS, REGEX_PATTERNS
 
 
 def run_main_pipeline(

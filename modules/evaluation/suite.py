@@ -12,7 +12,12 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 import pandas as pd
 from rouge_score import rouge_scorer
-import bert_score
+
+try:
+    import bert_score
+    HAS_BERT_SCORE = False  # Disabled due to matplotlib dependency issue
+except ImportError:
+    HAS_BERT_SCORE = False
 
 from .evaluator import (
     match_by_fuzzy_name,
@@ -22,12 +27,12 @@ from .evaluator import (
     evaluate_text_fields,
     evaluate_education_components,
 )
-from .parsing import (
+from ..utils.parsing import (
     birthdate_scores,
     parse_education,
     parse_committee_roles,
 )
-from .config_unified import RELIGION_HIERARCHY
+from ..config.config_unified import RELIGION_HIERARCHY
 
 import warnings
 warnings.filterwarnings("ignore", message="Some weights of RobertaModel were not initialized")
@@ -60,6 +65,13 @@ def load_and_merge_results(
     print(f"✓ Loaded {len(df_gt)} ground truth records")
     print(f"✓ Prompt styles: {df_pred['prompt_style'].unique()}\n")
     
+    # Rename prediction columns to match GT column names for consistent _x/_y suffixing
+    # This ensures all paired columns get _x (GT) and _y (pred) suffixes after merge
+    pred_rename_map = {
+        "religious_affiliation": "religion",  # Match GT column name
+    }
+    df_pred = df_pred.rename(columns=pred_rename_map)
+    
     # Merge by style
     merged_by_style = {}
     
@@ -67,11 +79,22 @@ def load_and_merge_results(
         df_style = df_pred[df_pred["prompt_style"] == style]
         
         # Try exact merge first
-        merged = df_gt.merge(df_style, on="senator_id", how="inner")
+        merged = df_gt.merge(df_style, on="senator_id", how="inner", suffixes=("_x", "_y"))
         
         # Fall back to fuzzy if needed
         if merged.empty and merge_method == "fuzzy":
             merged = match_by_fuzzy_name(df_gt, df_style)
+        
+        # Rename prediction-only columns to have _y suffix for consistency
+        pred_only_cols = [
+            "education",
+            "extraction_error", 
+            "birth_year_inferred",
+            "religious_affiliation_inferred",
+            "race_ethnicity"
+        ]
+        rename_suffix = {col: f"{col}_y" for col in pred_only_cols if col in merged.columns}
+        merged = merged.rename(columns=rename_suffix)
         
         merged_by_style[style] = merged
     
@@ -80,6 +103,151 @@ def load_and_merge_results(
         "df_gt": df_gt,
         "merged_by_style": merged_by_style,
     }
+
+
+def get_per_row_scores(
+    merged_df: pd.DataFrame,
+    style: str,
+    religion_hierarchy: Optional[Dict] = None
+) -> pd.DataFrame:
+    """
+    Compute per-row match scores for all fields with consistent NaN/0 semantics.
+    
+    REUSABLE by both aggregate evaluation (evaluate_all_styles sums these)
+    and detailed spreadsheet export (notebook comparison file).
+    
+    NaN/0 Handling (per evaluator.py architecture):
+    ────────────────────────────────────────────
+    • gender: 0.0 if pred missing (high-confidence extractable field)
+              NaN if GT missing
+    • religion: NaN if either missing (low-confidence optional field)
+    • name, birthdate: Per-field logic (exact match or normalized scoring)
+    • education, committee_roles: ROUGE F1; 0.0 if pred missing and GT not absent
+    
+    Args:
+        merged_df: Merged GT + predictions with _x (GT) and _y (pred) suffixes
+        style: Prompt style name (for display only)
+        religion_hierarchy: Religion matching taxonomy (defaults RELIGION_HIERARCHY)
+        
+    Returns:
+        DataFrame with columns:
+        - senator_id
+        - [field]_ground_truth, [field]_predicted, [field]_match_score for each field
+        - overall_match_score (mean of all match scores)
+    """
+    if religion_hierarchy is None:
+        religion_hierarchy = RELIGION_HIERARCHY
+    
+    comparison_data = []
+    scorer_rouge = rouge_scorer.RougeScorer(['rouge1'], use_stemmer=True)
+    
+    # Detect which columns exist with _x/_y suffixes
+    cols = set(merged_df.columns)
+    gt_cols = {col.replace('_x', ''): col for col in cols if col.endswith('_x')}
+    pred_cols = {col.replace('_y', ''): col for col in cols if col.endswith('_y')}
+    
+    for idx, row in merged_df.iterrows():
+        comparison_row = {
+            "senator_id": row.get("senator_id"),
+        }
+        
+        # ─── 1. NAME (exact match after normalization) ───
+        if "full_name" in gt_cols and "full_name" in pred_cols:
+            gt_val = row.get(gt_cols["full_name"])
+            pred_val = row.get(pred_cols["full_name"])
+            comparison_row["name_ground_truth"] = gt_val
+            comparison_row["name_predicted"] = pred_val
+            score = name_match_score(gt_val, pred_val) if (pd.notna(gt_val) and pd.notna(pred_val)) else float('nan')
+            comparison_row["name_match_score"] = score
+        
+        # ─── 2. GENDER (strict: missing pred → 0.0; missing GT → NaN) ───
+        if "gender" in gt_cols and "gender" in pred_cols:
+            gt_val = row.get(gt_cols["gender"])
+            pred_val = row.get(pred_cols["gender"])
+            comparison_row["gender_ground_truth"] = gt_val
+            comparison_row["gender_predicted"] = pred_val
+            score = gender_match_score(gt_val, pred_val)
+            comparison_row["gender_match_score"] = score
+        
+        # ─── 3. BIRTHDATE (year/month/day granularity, NaN if either missing) ───
+        if "birthdate" in gt_cols and "birthdate" in pred_cols:
+            gt_val = row.get(gt_cols["birthdate"])
+            pred_val = row.get(pred_cols["birthdate"])
+            comparison_row["birthdate_ground_truth"] = gt_val
+            comparison_row["birthdate_predicted"] = pred_val
+            if pd.isna(gt_val) or pd.isna(pred_val):
+                score = float('nan')
+            else:
+                scores = birthdate_scores(gt_val, pred_val)
+                score = scores.get("exact", float('nan'))
+            comparison_row["birthdate_match_score"] = score
+        
+        # ─── 4. RELIGION (hierarchical: NaN if either missing) ───
+        if "religion" in gt_cols and "religion" in pred_cols:
+            gt_val = row.get(gt_cols["religion"])
+            pred_val = row.get(pred_cols["religion"])
+            comparison_row["religion_ground_truth"] = gt_val
+            comparison_row["religion_predicted"] = pred_val
+            score = religion_match_score(gt_val, pred_val, religion_hierarchy=religion_hierarchy)
+            comparison_row["religion_match_score"] = score
+        
+        # ─── 5. EDUCATION (ROUGE-1 F-measure text similarity) ───
+        if "education" in gt_cols and "education" in pred_cols:
+            gt_val = row.get(gt_cols["education"])
+            pred_val = row.get(pred_cols["education"])
+            comparison_row["education_ground_truth"] = gt_val
+            comparison_row["education_predicted"] = pred_val
+            
+            # Apply text field scoring logic:
+            # - Both absent or both present: mutual score (ROUGE or 1.0 if absent)
+            # - GT absent, pred present: 1.0 (correctly detected absence)
+            # - GT present, pred absent: 0.0 (extraction failure)
+            # - GT absent, pred absent: 1.0 (correct absence)
+            if pd.isna(gt_val) and pd.isna(pred_val):
+                score = 1.0
+            elif pd.isna(gt_val) or pd.isna(pred_val):
+                score = 0.0
+            else:
+                try:
+                    rouge_result = scorer_rouge.score(str(gt_val), str(pred_val))
+                    score = rouge_result['rouge1'].fmeasure
+                except Exception:
+                    score = 0.0
+            comparison_row["education_match_score"] = score
+        
+        # ─── 6. COMMITTEE_ROLES (ROUGE-1 F-measure text similarity) ───
+        if "committee_roles" in gt_cols and "committee_roles" in pred_cols:
+            gt_val = row.get(gt_cols["committee_roles"])
+            pred_val = row.get(pred_cols["committee_roles"])
+            comparison_row["committee_roles_ground_truth"] = gt_val
+            comparison_row["committee_roles_predicted"] = pred_val
+            
+            if pd.isna(gt_val) and pd.isna(pred_val):
+                score = 1.0
+            elif pd.isna(gt_val) or pd.isna(pred_val):
+                score = 0.0
+            else:
+                try:
+                    rouge_result = scorer_rouge.score(str(gt_val), str(pred_val))
+                    score = rouge_result['rouge1'].fmeasure
+                except Exception:
+                    score = 0.0
+            comparison_row["committee_roles_match_score"] = score
+        
+        comparison_data.append(comparison_row)
+    
+    comparison_df = pd.DataFrame(comparison_data)
+    
+    # Add metadata columns
+    score_cols = [col for col in comparison_df.columns if col.endswith("_match_score")]
+    if score_cols:
+        comparison_df["overall_match_score"] = comparison_df[score_cols].mean(axis=1)
+    
+    pred_cols_list = [col for col in comparison_df.columns if col.endswith("_predicted")]
+    if pred_cols_list:
+        comparison_df["attributes_with_predictions"] = comparison_df[pred_cols_list].notna().sum(axis=1)
+    
+    return comparison_df
 
 
 def evaluate_all_styles(
@@ -182,22 +350,49 @@ def _evaluate_style(
     style_results = {
         "style": style,
         "record_count": len(merged),
-        "metrics": {}
+        "metrics": {},
+        "field_counts": {}  # Track n_gt and n_pred separately per field
     }
     
    # ─────────────────────────────────────────────────────────────────────
-    # Track NaN counts for all fields
+    # Track GT and Pred counts for all fields
     # ─────────────────────────────────────────────────────────────────────
 
-    nan_counts = {
-        "name": int(merged[["full_name_x", "full_name_y"]].isna().any(axis=1).sum()) if "full_name_x" in merged.columns else int(merged["full_name"].isna().sum()),
-        "gender": int(merged["gender_x"].isna().sum()) if "gender_x" in merged.columns else int(merged["gender"].isna().sum()),
-        "birthdate": int(merged["birthdate_x"].isna().sum()) if "birthdate_x" in merged.columns else int(merged["birthdate"].isna().sum()),
-        "religion": int(merged["religious_affiliation_x"].isna().sum()) if "religious_affiliation_x" in merged.columns else (int(merged["religion"].isna().sum()) if "religion" in merged.columns else 0),
-        "education": int(merged["education_x"].isna().sum()) if "education_x" in merged.columns else int(merged["education"].isna().sum()),
-        "committee_roles": int(merged["committee_roles_x"].isna().sum()) if "committee_roles_x" in merged.columns else int(merged["committee_roles"].isna().sum()),
-    }
-    style_results["nan_counts"] = nan_counts
+    # Initialize field_counts for each field
+    for field in ["name", "gender", "birthdate", "religion", "education", "committee_roles"]:
+        style_results["field_counts"][field] = {"n_gt": 0, "n_pred": 0}
+    
+    # Compute GT and pred counts
+    if "full_name_x" in merged.columns:
+        style_results["field_counts"]["name"]["n_gt"] = int(merged["full_name_x"].notna().sum())
+    if "full_name_y" in merged.columns:
+        style_results["field_counts"]["name"]["n_pred"] = int(merged["full_name_y"].notna().sum())
+    
+    if "gender_x" in merged.columns:
+        style_results["field_counts"]["gender"]["n_gt"] = int(merged["gender_x"].notna().sum())
+    if "gender_y" in merged.columns:
+        style_results["field_counts"]["gender"]["n_pred"] = int(merged["gender_y"].notna().sum())
+    
+    if "birthdate_x" in merged.columns:
+        style_results["field_counts"]["birthdate"]["n_gt"] = int(merged["birthdate_x"].notna().sum())
+    if "birthdate_y" in merged.columns:
+        style_results["field_counts"]["birthdate"]["n_pred"] = int(merged["birthdate_y"].notna().sum())
+    
+    if "religion_x" in merged.columns:
+        style_results["field_counts"]["religion"]["n_gt"] = int(merged["religion_x"].notna().sum())
+    if "religion_y" in merged.columns:
+        style_results["field_counts"]["religion"]["n_pred"] = int(merged["religion_y"].notna().sum())
+    
+    if "education_x" in merged.columns:
+        style_results["field_counts"]["education"]["n_gt"] = int(merged["education_x"].notna().sum())
+    if "education_y" in merged.columns:
+        style_results["field_counts"]["education"]["n_pred"] = int(merged["education_y"].notna().sum())
+    
+    if "committee_roles_x" in merged.columns:
+        style_results["field_counts"]["committee_roles"]["n_gt"] = int(merged["committee_roles_x"].notna().sum())
+    if "committee_roles_y" in merged.columns:
+        style_results["field_counts"]["committee_roles"]["n_pred"] = int(merged["committee_roles_y"].notna().sum())
+    
     style_results["total_records"] = len(merged)
     
     # ─────────────────────────────────────────────────────────────────────
@@ -259,10 +454,9 @@ def _evaluate_style(
     # Religion evaluation
     # ─────────────────────────────────────────────────────────────────────
     
-    gt_relig_col = next((c for c in ["religious_affiliation_x", "religious_affiliation"] 
-                         if c in merged.columns), None)
-    pred_relig_col = next((c for c in ["religious_affiliation_y", "religious_affiliation"] 
-                           if c in merged.columns), None)
+    # Now consistently using religion_x (GT) and religion_y (pred)
+    gt_relig_col = "religion_x" if "religion_x" in merged.columns else None
+    pred_relig_col = "religion_y" if "religion_y" in merged.columns else None
     
     if gt_relig_col and pred_relig_col:
         relig_scores_list = [
@@ -278,9 +472,9 @@ def _evaluate_style(
     # Education evaluation (ROUGE + BERT + component breakdown)
     # ─────────────────────────────────────────────────────────────────────
     
-    # After GT+pred merge, GT education may be suffixed as "education_x" or remain "education_text"
-    gt_edu_col   = next((c for c in ["education_text", "education_x", "education"] if c in merged.columns), None)
-    pred_edu_col = next((c for c in ["education_y",    "education"]                if c in merged.columns and c != gt_edu_col), None)
+    # After merge, GT education is "education_x" (if it exists), pred is "education_y"
+    gt_edu_col   = next((c for c in ["education_x"] if c in merged.columns), None)
+    pred_edu_col = "education_y" if "education_y" in merged.columns else None
 
     if gt_edu_col and pred_edu_col:
         # Define field specifications for evaluate_text_fields
@@ -289,8 +483,9 @@ def _evaluate_style(
         ]
         
         # Call evaluate_text_fields for batched ROUGE + BERT scoring
+        bert_scorer = bert_score if HAS_BERT_SCORE else None
         text_results = evaluate_text_fields(
-            merged, education_fields, scorer_rouge, bert_scorer=bert_score
+            merged, education_fields, scorer_rouge, bert_scorer=bert_scorer
         )
         
         # Map text field results to metrics
@@ -318,13 +513,17 @@ def _evaluate_style(
     # Committee roles evaluation (ROUGE + BERT)
     # ─────────────────────────────────────────────────────────────────────
 
-    if "committee_roles" in merged.columns:
+    gt_comm_col = "committee_roles_x" if "committee_roles_x" in merged.columns else None
+    pred_comm_col = "committee_roles_y" if "committee_roles_y" in merged.columns else None
+    
+    if gt_comm_col and pred_comm_col:
         committee_fields = [
-            ("committee_roles", "committee_roles", "committee_roles", parse_committee_roles)
+            ("committee_roles", gt_comm_col, pred_comm_col, parse_committee_roles)
         ]
         
+        bert_scorer = bert_score if HAS_BERT_SCORE else None
         text_results = evaluate_text_fields(
-            merged, committee_fields, scorer_rouge, bert_scorer=bert_score
+            merged, committee_fields, scorer_rouge, bert_scorer=bert_scorer
         )
         
         if "committee_roles" in text_results:
@@ -344,7 +543,7 @@ def _evaluate_style(
             if len(subset) > 0:
                 scores = [
                     religion_match_score(gt, pred, religion_hierarchy)
-                    for gt, pred in zip(subset["religious_affiliation_x"], subset["religious_affiliation_y"])
+                    for gt, pred in zip(subset["religion_x"], subset["religion_y"])
                 ]
                 valid = [s for s in scores if not pd.isna(s)]
                 if valid:
@@ -368,7 +567,7 @@ def print_evaluation_summary(results: Dict[str, Any]) -> None:
     
     for style, style_results in results.get("by_style", {}).items():
         metrics = style_results.get("metrics", {})
-        nans = style_results.get("nan_counts", {})
+        field_counts = style_results.get("field_counts", {})
         total = style_results.get("total_records", 0)
         
         print(f"\nPROMPT STYLE: {style.upper():20s} (n={total})\n")
@@ -379,35 +578,42 @@ def print_evaluation_summary(results: Dict[str, Any]) -> None:
                 val = metrics[field]
                 if pd.notna(val):
                     pct = val * 100
-                    # Parse field name for display
+                    # Parse field name for display and get counts
                     if field == "name_exact":
                         label = "full_name (exact)"
-                        skipped = nans.get("name", 0)
-                        n_scored = total - skipped
+                        counts = field_counts.get("name", {})
                     elif field == "gender_exact":
-                        label, skipped = "gender (exact)", nans.get("gender", 0)
-                        n_scored = total - skipped
+                        label = "gender (exact)"
+                        counts = field_counts.get("gender", {})
                     elif "birthdate" in field:
                         suffix = field.split("_")[1]
                         label = f"birthdate_{suffix}"
-                        skipped = nans.get("birthdate", 0)
-                        n_scored = total - skipped
+                        counts = field_counts.get("birthdate", {})
                     elif "religion" in field:
                         label = "religion"
-                        skipped = nans.get("religion", 0)
-                        n_scored = total - skipped
+                        counts = field_counts.get("religion", {})
                     else:
                         label = field
-                        n_scored = total
-                        skipped = 0
+                        counts = {}
                     
-                    print(f"Accuracy   — {label:25s}: {pct:6.2f}%  (n={n_scored}, skipped {skipped} missing GT)")
+                    n_gt = counts.get("n_gt", 0)
+                    n_pred = counts.get("n_pred", 0)
+                    print(f"Accuracy   — {label:25s}: {pct:6.2f}%  (n_gt={n_gt}, n_pred={n_pred})")
         
         # ────── Rouge-1 Metrics ──────
         for field in ["education_rouge1", "committee_roles_rouge1"]:
             if field in metrics and pd.notna(metrics[field]):
-                label = field.replace("_", " ")
-                print(f"Rouge-1    — {label:25s}: {metrics[field]:.3f}")
+                if field == "education_rouge1":
+                    field_name = "education"
+                    label = "education rouge1"
+                else:
+                    field_name = "committee_roles"
+                    label = "committee roles rouge1"
+                
+                counts = field_counts.get(field_name, {})
+                n_gt = counts.get("n_gt", 0)
+                n_pred = counts.get("n_pred", 0)
+                print(f"Rouge-1    — {label:25s}: {metrics[field]:.3f}  (n_gt={n_gt}, n_pred={n_pred})")
         
         # ────── BERT Score ──────
         bert_field_labels = {
@@ -416,7 +622,12 @@ def print_evaluation_summary(results: Dict[str, Any]) -> None:
         }
         for field, label in bert_field_labels.items():
             if field in metrics and pd.notna(metrics[field]):
-                print(f"BERT score — {label:25s}: F1={metrics[field]:.3f}")
+                # Extract field name for lookup in counts
+                field_name = "education" if "education" in field else "committee_roles"
+                counts = field_counts.get(field_name, {})
+                n_gt = counts.get("n_gt", 0)
+                n_pred = counts.get("n_pred", 0)
+                print(f"BERT score — {label:25s}: F1={metrics[field]:.3f}  (n_gt={n_gt}, n_pred={n_pred})")
         
         # ────── Education Components ──────
         edu_components = {k: v for k, v in metrics.items() if "education_component" in k}

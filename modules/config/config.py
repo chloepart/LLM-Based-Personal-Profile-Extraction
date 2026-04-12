@@ -1,56 +1,44 @@
 """
-Unified configuration for Senate LLM Extraction Pipeline
-Consolidates all paths, API settings, prompts, and pipeline parameters with improved structure
+Centralized configuration for Senate LLM Extraction Pipeline
+Consolidates all paths, API settings, prompts, and pipeline parameters
 """
 
-import json
-import os
-import re
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, List, Dict, Any
-
-
-# ============================================================================
-# PROJECT ROOT RESOLUTION
-# ============================================================================
-
-def get_project_root() -> Path:
-    """Resolve project root using the location of this config file"""
-    return Path(__file__).parent.parent
-
+import datetime
 
 # ============================================================================
 # FILE PATHS
 # ============================================================================
 
+# Resolve project root: modules/config/config.py -> project_root/.
+PROJECT_ROOT = Path(__file__).parent.parent.parent.resolve()
+
 PATHS = {
-    # Base project root
-    'project_root': get_project_root(),
-    
     # Data input directories
-    'html_data': get_project_root() / 'external_data' / 'senate_html',
-    'synthetic_data': get_project_root() / 'data' / 'synthetic',
-    'icl_data': get_project_root() / 'data' / 'icl',
+    'html_data': PROJECT_ROOT / "external_data" / "senate_html",
+    'synthetic_data': PROJECT_ROOT / "data" / "synthetic",
+    'icl_data': PROJECT_ROOT / "data" / "icl",
     
     # Output directories
-    'output_root': get_project_root() / 'outputs' / 'senate_results',
-    'log_dir': get_project_root() / 'outputs' / 'log',
-    'result_dir': get_project_root() / 'outputs' / 'result',
+    'output_root': PROJECT_ROOT / "outputs" / "senate_results",
+    'log_dir': PROJECT_ROOT / "outputs" / "log",
+    'result_dir': PROJECT_ROOT / "outputs" / "result",
     
     # Ground truth & external data
-    'ground_truth_root': get_project_root() / 'external_data' / 'ground_truth',
-    'pew_religion': get_project_root() / 'external_data' / 'pew_religion.csv',
+    'ground_truth_root': PROJECT_ROOT / "external_data" / "ground_truth",
+    'pew_religion': PROJECT_ROOT / "external_data" / "pew_religion.csv",
+    'senators_index': PROJECT_ROOT / "external_data" / "senate_html" / "senators_index.csv",
     
     # Config files
-    'groq_config': get_project_root() / 'configs' / 'model_configs' / 'groq_config_extraction.json',
-    'gemini_config': get_project_root() / 'configs' / 'model_configs' / 'gemini_config.json',
-    'gpt_config': get_project_root() / 'configs' / 'model_configs' / 'gpt_config.json',
+    'groq_config': PROJECT_ROOT / "configs" / "model_configs" / "groq_config_extraction.json",
+    'gemini_config': PROJECT_ROOT / "configs" / "model_configs" / "gemini_config.json",
+    'gpt_config': PROJECT_ROOT / "configs" / "model_configs" / "gpt_config.json",
 }
 
 # Auto-create output directories
-for path_key in ['output_root', 'log_dir', 'result_dir']:
-    PATHS[path_key].mkdir(parents=True, exist_ok=True)
+PATHS['output_root'].mkdir(parents=True, exist_ok=True)
+PATHS['log_dir'].mkdir(parents=True, exist_ok=True)
+PATHS['result_dir'].mkdir(parents=True, exist_ok=True)
 
 
 # ============================================================================
@@ -198,6 +186,55 @@ Do not explain. Output only the string or null.
 
 
 # ============================================================================
+# PIPELINE CONFIGURATION
+# ============================================================================
+
+class PipelineConfig:
+    """Main pipeline configuration and session metadata"""
+    
+    def __init__(self):
+        self.timestamp = datetime.datetime.now().isoformat()
+        
+        # Prompt style settings
+        self.run_all_prompt_styles = True
+        self.active_prompt_style = "direct"  # Used only if run_all_prompt_styles=False
+        self.styles_to_run = ["direct", "pseudocode", "icl"] if self.run_all_prompt_styles else [self.active_prompt_style]
+        
+        # Rate limiting (in seconds)
+        self.inter_senator_delay = 6 if self.run_all_prompt_styles else 4
+        self.between_styles_delay = 3
+        self.web_scrape_delay = 1.5
+        self.baseline_delay = 0.5
+        
+        # Ablation settings
+        self.ablation_size = 25
+        self.ablation_random_seed = 42
+        
+        # API retry settings
+        self.max_api_retries = 5
+        self.retry_backoff_base = 2  # Exponential backoff: 2^attempt seconds
+        self.retry_backoff_max = 120  # Max 120 second wait between retries
+        
+    @property
+    def active_prompt_name(self):
+        """Return name of active prompt style"""
+        if self.run_all_prompt_styles:
+            return "all_styles"
+        return self.active_prompt_style
+    
+    @property
+    def session_metadata(self):
+        """Return dict of session metadata for logging"""
+        return {
+            "timestamp": self.timestamp,
+            "prompt_style": self.active_prompt_name,
+            "run_all_styles": self.run_all_prompt_styles,
+            "inter_senator_delay": self.inter_senator_delay,
+            "between_styles_delay": self.between_styles_delay,
+        }
+
+
+# ============================================================================
 # EXTRACTION FIELDS DEFINITION
 # ============================================================================
 
@@ -242,6 +279,8 @@ GT_FIELDS = [
 # ============================================================================
 # REGEX PATTERNS FOR BASELINE EXTRACTION
 # ============================================================================
+
+import re
 
 EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
 PHONE_RE = re.compile(r"(?:\+\d+\s?)?(?:\d{3}[\-\s]?\d{3,}[\-\s]?\d{4})")
@@ -305,221 +344,3 @@ RELIGION_HIERARCHY = {
     "no religion": "none",
     "unaffiliated": "none",
 }
-
-
-# ============================================================================
-# DATACLASSES - CONFIGURATION COMPONENTS
-# ============================================================================
-
-@dataclass
-class RateLimitConfig:
-    """Rate limiting and delay settings for API and web scraping"""
-    inter_senator_delay: float = 6.0
-    inter_style_delay: float = 3.0
-    web_scrape_delay: float = 1.5
-    backoff_base: int = 2
-    backoff_max: int = 120
-    
-    def get_inter_senator_delay(self, num_prompt_styles: int) -> float:
-        """
-        Adjust inter-senator delay based on number of prompt styles.
-        If running multiple styles, add proportional delay between styles.
-        
-        Args:
-            num_prompt_styles: Number of prompt styles being evaluated
-            
-        Returns:
-            Adjusted delay in seconds
-        """
-        total_style_delay = (num_prompt_styles - 1) * self.inter_style_delay
-        return self.inter_senator_delay + total_style_delay
-
-
-@dataclass
-class AblationConfig:
-    """Ablation study settings"""
-    enabled: bool = False
-    subset_size: int = 25
-    random_seed: int = 42
-    
-    def validate(self, total_senators: int) -> bool:
-        """
-        Validate ablation configuration against total senator count.
-        
-        Args:
-            total_senators: Total number of senators available
-            
-        Returns:
-            True if valid, raises ValueError otherwise
-        """
-        if self.enabled and self.subset_size > total_senators:
-            raise ValueError(
-                f"Ablation subset_size ({self.subset_size}) cannot exceed "
-                f"total senators ({total_senators})"
-            )
-        if self.subset_size <= 0:
-            raise ValueError("subset_size must be positive")
-        if self.random_seed < 0:
-            raise ValueError("random_seed cannot be negative")
-        return True
-
-
-@dataclass
-class APIConfig:
-    """API and authentication settings"""
-    provider: str = "groq"
-    api_key: Optional[str] = None
-    model_name: Optional[str] = None
-    max_retries: int = 5
-    max_tokens: int = 2048
-    temperature: float = 0.0
-    
-    def __post_init__(self):
-        """Validate API configuration after initialization"""
-        valid_providers = ["groq", "openai", "gemini", "local"]
-        if self.provider not in valid_providers:
-            raise ValueError(f"provider must be one of {valid_providers}, got {self.provider}")
-        
-        if self.provider != "local" and not self.api_key:
-            env_key_name = f"{self.provider.upper()}_API_KEY"
-            self.api_key = os.getenv(env_key_name)
-            if not self.api_key:
-                raise ValueError(
-                    f"API key required for {self.provider}. "
-                    f"Set {env_key_name} environment variable or pass api_key parameter."
-                )
-        
-        if not self.model_name:
-            raise ValueError("model_name is required")
-        
-        if not 0.0 <= self.temperature <= 2.0:
-            raise ValueError("temperature must be between 0.0 and 2.0")
-
-
-@dataclass
-class PipelineConfig:
-    """Main pipeline configuration composing API, rate limit, and ablation settings"""
-    api_config: APIConfig = field(default_factory=lambda: APIConfig(provider="groq"))
-    rate_limit_config: RateLimitConfig = field(default_factory=RateLimitConfig)
-    ablation_config: AblationConfig = field(default_factory=AblationConfig)
-    
-    prompt_styles: List[str] = field(default_factory=lambda: ["direct", "pseudocode", "icl"])
-    prompt_map: Dict[str, str] = field(default_factory=dict)  # Add this
-    run_all_styles: bool = True
-    
-    _api_client: Optional[Any] = field(default=None, init=False, repr=False)
-    _output_dir: Optional[Path] = field(default=None, init=False, repr=False)
-    _html_dir: Optional[Path] = field(default=None, init=False, repr=False)
-    
-    @property
-    def model(self) -> str:
-        """Convenience accessor for model name"""
-        return self.api_config.model_name
-    
-    @property
-    def temperature(self) -> float:
-        """Convenience accessor for temperature setting"""
-        return self.api_config.temperature
-    
-    @property
-    def max_tokens(self) -> int:
-        """Convenience accessor for max_tokens setting"""
-        return self.api_config.max_tokens
-    
-    @property
-    def api_client(self):
-        """Lazy-initialized API client for Groq"""
-        if self._api_client is None:
-            from groq import Groq
-            self._api_client = Groq(api_key=self.api_config.api_key)
-        return self._api_client
-    
-    @property
-    def output_dir(self) -> Path:
-        """Output directory for results"""
-        if self._output_dir is None:
-            self._output_dir = PATHS['output_root']
-        return self._output_dir
-    
-    @property
-    def html_dir(self) -> Path:
-        """HTML data directory"""
-        if self._html_dir is None:
-            self._html_dir = PATHS['html_data']
-        return self._html_dir
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Return serializable config dict"""
-        return {
-            "model": self.model,
-            "temperature": self.api_config.temperature,
-            "max_tokens": self.api_config.max_tokens,
-            "prompt_styles": self.prompt_styles,
-            "output_dir": str(self.output_dir),
-            "html_dir": str(self.html_dir),
-        }
-    
-    @classmethod
-    def from_groq_config_json(cls, config_path: Optional[Path] = None) -> "PipelineConfig":
-        """
-        Load pipeline configuration from Groq config JSON file.
-        
-        Args:
-            config_path: Path to groq_config.json. If None, uses default from PATHS.
-            
-        Returns:
-            PipelineConfig instance
-        """
-        if config_path is None:
-            config_path = PATHS['groq_config']
-
-        config_path = Path(config_path) 
-        
-        if not config_path.exists():
-            raise FileNotFoundError(f"Config file not found: {config_path}")
-        
-        with open(config_path, 'r') as f:
-            config_data = json.load(f)
-        
-        # Extract API configuration
-        # Handle both nested (model_info.name) and flat (model_name) config structures
-        model_name = config_data.get('model_name')
-        if not model_name and 'model_info' in config_data:
-            model_name = config_data['model_info'].get('name', 'mixtral-8x7b-32768')
-        if not model_name:
-            model_name = 'mixtral-8x7b-32768'
-        
-        api_config = APIConfig(
-            provider="groq",
-            api_key=config_data.get('api_key') or os.getenv('GROQ_API_KEY'),
-            model_name=model_name,
-            max_retries=config_data.get('max_retries', 5),
-            max_tokens=config_data.get('max_tokens', config_data.get('params', {}).get('max_output_tokens', 2048)),
-            temperature=config_data.get('temperature', config_data.get('params', {}).get('temperature', 0.0)),
-        )
-        
-        rate_limit_config = RateLimitConfig(
-            inter_senator_delay=config_data.get('inter_senator_delay', 6.0),
-            inter_style_delay=config_data.get('inter_style_delay', 3.0),
-            web_scrape_delay=config_data.get('web_scrape_delay', 1.5),
-            backoff_base=config_data.get('backoff_base', 2),
-            backoff_max=config_data.get('backoff_max', 120),
-        )
-        
-        ablation_config = AblationConfig(
-            enabled=config_data.get('ablation_enabled', False),
-            subset_size=config_data.get('ablation_subset_size', 25),
-            random_seed=config_data.get('ablation_random_seed', 42),
-        )
-        
-        return cls(
-            api_config=api_config,
-            rate_limit_config=rate_limit_config,
-            ablation_config=ablation_config,
-            prompt_styles=config_data.get('prompt_styles', ["direct", "pseudocode", "icl"]),
-            run_all_styles=config_data.get('run_all_styles', True),
-        )
-    
-    def get_active_prompt_styles(self) -> List[str]:
-        """Return list of prompt styles to run"""
-        return self.prompt_styles if self.run_all_styles else self.prompt_styles[:1]

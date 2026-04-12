@@ -1,10 +1,20 @@
 """
-LLM Pipeline Modules
-Consolidated utilities for configuration, name processing, HTML extraction,
-parsing, baselines, and evaluation.
+LLM Pipeline Modules – Organized Structure
+
+Submodules:
+  - api/        : LLM provider integrations (Groq, OpenAI, etc.)
+  - config/     : Configuration management, prompts, and API settings
+  - data/       : Data import, HTML processing, and ground truth
+  - evaluation/ : Evaluation metrics, scoring, and baselines
+  - extraction/ : Session initialization and pipeline orchestration
+  - utils/      : Utilities for parsing and name normalization
+
+All exports are re-exported here for backward compatibility.
 """
 
-from .config_unified import (
+# Re-export from submodules
+from .api import call_groq
+from .config import (
     PATHS,
     TASK1_DIRECT,
     TASK1_PSEUDOCODE,
@@ -21,40 +31,49 @@ from .config_unified import (
     GT_FIELDS,
     REGEX_PATTERNS,
     RELIGION_HIERARCHY,
+    setup_logging,
+    get_logger,
 )
-
-from .logging_config import setup_logging, get_logger
-
-from .name_utils import NameNormalizer
-
-from .html_processing import (
+from .data import (
     HTMLProcessor,
     WikipediaExtractor,
     extract_readable_text,
     extract_infobox,
-)
-
-# NEW: HTML utilities (consolidated from static methods)
-from .html_utils import (
-    extract_readable_text as extract_readable_text_fn,
-    extract_infobox as extract_infobox_fn,
     extract_wikipedia_profile,
-)
-
-# NEW: Data merging and signal detection
-from .data_merge import (
     merge_pew,
     detect_religion_signal,
     normalize_birthdate,
 )
-
-from .api import (
-    call_groq,
-    run_pipeline,
+from .evaluation import (
+    normalize_name,
+    name_match_score,
+    create_normalized_senator_id,
+    match_by_fuzzy_name,
+    gender_match_score,
+    get_religion_category,
+    religion_match_score,
+    evaluate_text_fields,
+    evaluate_education_components,
+    load_and_merge_results,
+    get_per_row_scores,
+    evaluate_all_styles,
+    print_evaluation_summary,
+    RegexBaseline,
+    SpaCyBaseline,
+    KeywordSearchBaseline,
+    BERTBaseline,
+    regex_extract,
+    spacy_extract,
+    keyword_extract,
+    bert_extract,
+    DEFAULT_KEYWORD_MAP,
 )
-
-# NEW: Parsing utilities (consolidates 3 variants into single module)
-from .parsing import (
+from .extraction import (
+    initialize_pipeline_session,
+    run_main_pipeline,
+    run_baselines,
+)
+from .utils import (
     EducationParser,
     parse_education_detailed,
     parse_education,
@@ -66,52 +85,7 @@ from .parsing import (
     compare_education_components,
     parse_date,
     birthdate_scores,
-)
-
-# NEW: Baseline extractors (regex + spaCy NER + keyword search + BERT NER)
-from .baselines import (
-    RegexBaseline,
-    SpaCyBaseline,
-    KeywordSearchBaseline,
-    BERTBaseline,
-    regex_extract,
-    spacy_extract,
-    keyword_extract,
-    bert_extract,
-    DEFAULT_KEYWORD_MAP,
-)
-
-# NEW: Evaluation metrics and scoring functions
-from .evaluator import (
-    normalize_name,
-    name_match_score,
-    create_normalized_senator_id,
-    match_by_fuzzy_name,
-    parse_date,
-    birthdate_scores,
-    gender_match_score,
-    get_religion_category,
-    religion_match_score,
-    evaluate_text_fields,
-    evaluate_education_components,
-)
-
-# NEW: Evaluation suite with caching (Phase 4)
-from .evaluation_suite import (
-    load_and_merge_results,
-    evaluate_all_styles,
-    print_evaluation_summary,
-)
-
-# NEW: Session initialization (Phase 2)
-from .session_init import (
-    initialize_pipeline_session,
-)
-
-# NEW: Pipeline orchestration (Phase 3)
-from .pipeline_runner import (
-    run_main_pipeline,
-    run_baselines,
+    NameNormalizer,
 )
 
 __all__ = [
@@ -176,6 +150,7 @@ __all__ = [
     "evaluate_education_components",
     # evaluation_suite (Phase 4)
     "load_and_merge_results",
+    "get_per_row_scores",
     "evaluate_all_styles",
     "print_evaluation_summary",
     # session_init (Phase 2)

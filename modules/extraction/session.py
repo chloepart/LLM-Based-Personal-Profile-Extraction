@@ -12,7 +12,7 @@ from pathlib import Path
 import spacy
 import pandas as pd
 
-from .config_unified import PipelineConfig, ABLATION_STYLES
+from ..config.config_unified import PipelineConfig, ABLATION_STYLES
 
 
 def initialize_pipeline_session(
