@@ -1,6 +1,7 @@
 # Environment
 pie_env/
 venv/
+.venv_py311/
 env/
 .venv/
 *.egg-info/
