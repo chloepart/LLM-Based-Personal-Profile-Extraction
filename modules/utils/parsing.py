@@ -246,8 +246,7 @@ class SchoolNormalizer:
     # "institute" intentionally excluded — kept so "Massachusetts Institute of Technology"
     # strips to "massachusetts institute technology", matching the MIT alias canonical form.
     STOP_WORDS = {
-        "university", "college", "school", "institution",
-        "of", "the", "at", "and", "&",
+        "institution", "of", "the", "at", "and", "&",
     }
 
     @classmethod
@@ -394,10 +393,10 @@ def compare_education_components(gt_items, pred_items):
         ))
 
         # If no prediction came close, combined will be 0.0 — that's correct (penalize miss)
-        degree_scores.append(best["degree_exact"] if not _is_nan(best["degree_exact"]) else 0.0)
-        institution_scores.append(best["institution_fuzzy"] if not _is_nan(best["institution_fuzzy"]) else 0.0)
-        year_scores.append(best["year_exact"] if not _is_nan(best["year_exact"]) else 0.0)
-        combined_scores.append(best["combined"] if not _is_nan(best["combined"]) else 0.0)
+        degree_scores.append(best["degree_exact"] if not pd.isna(best["degree_exact"]) else 0.0)
+        institution_scores.append(best["institution_fuzzy"] if not pd.isna(best["institution_fuzzy"]) else 0.0)
+        year_scores.append(best["year_exact"] if not pd.isna(best["year_exact"]) else 0.0)
+        combined_scores.append(best["combined"] if not pd.isna(best["combined"]) else 0.0) 
 
     def _avg(lst):
         return sum(lst) / len(lst) if lst else float("nan")

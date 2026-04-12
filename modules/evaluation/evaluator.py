@@ -401,17 +401,48 @@ def evaluate_text_fields(merged_df, fields, rouge_scorer, bert_scorer=None):
 
 SCORE_KEYS = {"degree_exact", "institution_fuzzy", "year_exact", "combined_score"}
 
-
-def evaluate_education_components(merged_df):
+def evaluate_education_components(merged_df, bert_scorer=None):
     """
     Compute component-level education scores (degree, institution, year).
+    
+    Now includes optional BERT scoring for semantic similarity of each component.
+
+    Parameters
+    ----------
+    merged_df : pd.DataFrame
+        Merged GT + predictions with education_text and education columns
+    bert_scorer : bert_score module or None
+        If provided, computes semantic similarity for each component
 
     Returns
     -------
-    dict: { "degree_exact": float, "institution_fuzzy": float,
-            "year_exact": float, "combined_score": float, "n_gt": int }
+    dict: { 
+        "degree_exact": float,         # Exact match (0/1)
+        "institution_fuzzy": float,    # Fuzzy match (0/1)
+        "year_exact": float,           # Exact match (0/1)
+        "combined_score": float,       # Average of above
+        "degree_bert": float,          # BERT F1 for degrees (if scorer provided)
+        "institution_bert": float,     # BERT F1 for institutions (if scorer provided)
+        "year_bert": float,            # BERT F1 for years (if scorer provided)
+        "combined_component_bert": float,  # Average BERT across components
+        "n_gt": int                    # Number of GT education entries evaluated
+    }
     """
-    buckets = {"degree_exact": [], "institution_fuzzy": [], "year_exact": [], "combined_score": []}
+    import logging
+    
+    buckets = {
+        "degree_exact": [], 
+        "institution_fuzzy": [], 
+        "year_exact": [], 
+        "combined_score": [],
+        # Component strings for BERT scoring
+        "degree_gts": [],
+        "degree_preds": [],
+        "institution_gts": [],
+        "institution_preds": [],
+        "year_gts": [],
+        "year_preds": [],
+    }
 
     for _, row in merged_df.iterrows():
         try:
@@ -419,18 +450,120 @@ def evaluate_education_components(merged_df):
             pred_items = parse_education_detailed(row.get("education", "") or "")
             result     = compare_education_components(gt_items, pred_items)
         
-            for key, val in result.items():
-                if key not in SCORE_KEYS:
-                    continue
+            for key in SCORE_KEYS:
+                val = result.get(key)
                 if not pd.isna(val):
                     buckets[key].append(val)
+            
+            # ─── Collect component strings for BERT scoring ─────────────────
+            if bert_scorer is not None:
+                for gt_item in gt_items:
+                    # Find best-matching prediction
+                    candidates = [
+                        compare_education_components([gt_item], [pred_item])
+                        for pred_item in pred_items
+                    ]
+                    if candidates:
+                        best_idx = max(
+                            range(len(candidates)),
+                            key=lambda i: (
+                                candidates[i].get("combined_score", 0)
+                                if not pd.isna(candidates[i].get("combined_score"))
+                                else -1
+                            )
+                        )
+                        best_pred = pred_items[best_idx]
+                        
+                        # Collect institution strings
+                        inst_gt = (gt_item.get("institution") or "").strip()
+                        inst_pred = (best_pred.get("institution") or "").strip()
+                        if inst_gt:
+                            buckets["institution_gts"].append(inst_gt)
+                            buckets["institution_preds"].append(inst_pred)
+                        
+                        # Collect degree strings
+                        deg_gt = (gt_item.get("degree") or "").strip()
+                        deg_pred = (best_pred.get("degree") or "").strip()
+                        if deg_gt:
+                            buckets["degree_gts"].append(deg_gt)
+                            buckets["degree_preds"].append(deg_pred)
+                        
+                        # Collect year strings
+                        yr_gt = str(gt_item.get("year") or "").strip()
+                        yr_pred = str(best_pred.get("year") or "").strip()
+                        if yr_gt:
+                            buckets["year_gts"].append(yr_gt)
+                            buckets["year_preds"].append(yr_pred)
+        
         except Exception as e:
             logging.warning(f"Education component scoring failed for row: {e}")
 
-    return {
+    # ─────────────────────────────────────────────────────────────────────
+    # Aggregate exact/fuzzy match scores
+    # ─────────────────────────────────────────────────────────────────────
+    result_dict = {
         k: (sum(v) / len(v) if v else float("nan"))
         for k, v in buckets.items()
-    } | {"n_gt": len(buckets["combined_score"])}
+        if k in SCORE_KEYS
+    }
+    result_dict["n_gt"] = len(buckets["combined_score"])
+    
+    # ─────────────────────────────────────────────────────────────────────
+    # Compute BERT scores if scorer provided
+    # ─────────────────────────────────────────────────────────────────────
+    if bert_scorer is not None:
+        try:
+            component_bert_scores = []
+            
+            # Institution BERT
+            if buckets["institution_gts"]:
+                _, _, F = bert_scorer.score(
+                    buckets["institution_preds"],
+                    buckets["institution_gts"],
+                    lang="en",
+                    verbose=False
+                )
+                inst_bert = float(F.mean())
+                result_dict["institution_bert"] = inst_bert
+                result_dict["institution_n"] = len(buckets["institution_gts"])
+                component_bert_scores.append(inst_bert)
+            
+            # Degree BERT
+            if buckets["degree_gts"]:
+                _, _, F = bert_scorer.score(
+                    buckets["degree_preds"],
+                    buckets["degree_gts"],
+                    lang="en",
+                    verbose=False
+                )
+                deg_bert = float(F.mean())
+                result_dict["degree_bert"] = deg_bert
+                result_dict["degree_n"] = len(buckets["degree_gts"])
+                component_bert_scores.append(deg_bert)
+            
+            # Year BERT (less useful, but included for completeness)
+            if buckets["year_gts"]:
+                _, _, F = bert_scorer.score(
+                    buckets["year_preds"],
+                    buckets["year_gts"],
+                    lang="en",
+                    verbose=False
+                )
+                yr_bert = float(F.mean())
+                result_dict["year_bert"] = yr_bert
+                result_dict["year_n"] = len(buckets["year_gts"])
+                component_bert_scores.append(yr_bert)
+            
+            # Combined component BERT (average across all components)
+            if component_bert_scores:
+                result_dict["combined_component_bert"] = (
+                    sum(component_bert_scores) / len(component_bert_scores)
+                )
+        
+        except Exception as e:
+            logging.warning(f"BERT scoring failed: {e}")
+    
+    return result_dict
 
 
 __all__ = [

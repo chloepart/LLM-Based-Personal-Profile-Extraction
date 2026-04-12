@@ -18,6 +18,7 @@ from pathlib import Path
 import pandas as pd
 import time
 import re
+import json
 from modules.data.groundtruth import WIKI_URL_OVERRIDES
 
 logging.basicConfig(
@@ -124,6 +125,10 @@ def build_ground_truth(html_dir, pew_path, output_path, committee_yaml_path,
         if wiki_data.get("birthdate"):
             wiki_data["birthdate"] = normalize_birthdate(wiki_data["birthdate"])
 
+        # Format education as JSON string for CSV export
+        education_data = wiki_data.get("education", [])
+        education_json = json.dumps(education_data) if education_data else None
+        
         rows.append({
             "senator_id": senator_info["senator_id"],
             "name": name,
@@ -131,6 +136,7 @@ def build_ground_truth(html_dir, pew_path, output_path, committee_yaml_path,
             "birthdate": wiki_data.get("birthdate"),
             "gender": wiki_data.get("gender"),
             "race_ethnicity": wiki_data.get("race_ethnicity"),
+            "education": education_json,
             "committee_roles": resolve_committee_roles(
                 committee_map.get(name), committee_lookup
             ),

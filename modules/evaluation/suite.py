@@ -15,7 +15,7 @@ from rouge_score import rouge_scorer
 
 try:
     import bert_score
-    HAS_BERT_SCORE = False  # Disabled due to matplotlib dependency issue
+    HAS_BERT_SCORE = True  # Disabled due to matplotlib dependency issue
 except ImportError:
     HAS_BERT_SCORE = False
 
@@ -31,6 +31,8 @@ from ..utils.parsing import (
     birthdate_scores,
     parse_education,
     parse_committee_roles,
+    parse_education_detailed,          
+    compare_education_components,
 )
 from ..config.config_unified import RELIGION_HIERARCHY
 
@@ -191,18 +193,14 @@ def get_per_row_scores(
             score = religion_match_score(gt_val, pred_val, religion_hierarchy=religion_hierarchy)
             comparison_row["religion_match_score"] = score
         
-        # ─── 5. EDUCATION (ROUGE-1 F-measure text similarity) ───
+        # ─── 5. EDUCATION (ROUGE-1 F-measure + component-level breakdown) ───
         if "education" in gt_cols and "education" in pred_cols:
             gt_val = row.get(gt_cols["education"])
             pred_val = row.get(pred_cols["education"])
             comparison_row["education_ground_truth"] = gt_val
             comparison_row["education_predicted"] = pred_val
             
-            # Apply text field scoring logic:
-            # - Both absent or both present: mutual score (ROUGE or 1.0 if absent)
-            # - GT absent, pred present: 1.0 (correctly detected absence)
-            # - GT present, pred absent: 0.0 (extraction failure)
-            # - GT absent, pred absent: 1.0 (correct absence)
+            # Overall ROUGE score
             if pd.isna(gt_val) and pd.isna(pred_val):
                 score = 1.0
             elif pd.isna(gt_val) or pd.isna(pred_val):
@@ -214,6 +212,56 @@ def get_per_row_scores(
                 except Exception:
                     score = 0.0
             comparison_row["education_match_score"] = score
+            
+            # Component-level breakdown
+            try:
+                # Parse GT education (JSON string → list of dicts)
+                gt_items = []
+                if pd.notna(gt_val):
+                    if isinstance(gt_val, str):
+                        try:
+                            parsed = json.loads(gt_val)
+                            gt_items = parsed if isinstance(parsed, list) else []
+                        except (json.JSONDecodeError, TypeError):
+                            gt_items = []
+                    elif isinstance(gt_val, list):
+                        gt_items = gt_val
+                
+                # Parse pred education (could be JSON string OR Python repr string)
+                pred_items = []
+                if pd.notna(pred_val):
+                    if isinstance(pred_val, str):
+                        # Try JSON first
+                        try:
+                            parsed = json.loads(pred_val)
+                            pred_items = parsed if isinstance(parsed, list) else []
+                        except (json.JSONDecodeError, TypeError):
+                            # If JSON fails, try ast.literal_eval for Python repr strings
+                            try:
+                                import ast
+                                parsed = ast.literal_eval(pred_val)
+                                pred_items = parsed if isinstance(parsed, list) else []
+                            except (ValueError, SyntaxError):
+                                pred_items = []
+                    elif isinstance(pred_val, list):
+                        pred_items = pred_val
+                
+                # Score components
+                comp_scores = compare_education_components(gt_items, pred_items)
+                
+                comparison_row["education_component_degree_match_score"] = comp_scores.get("degree_exact", float('nan'))
+                comparison_row["education_component_institution_match_score"] = comp_scores.get("institution_fuzzy", float('nan'))
+                comparison_row["education_component_year_match_score"] = comp_scores.get("year_exact", float('nan'))
+                comparison_row["education_component_combined_score"] = comp_scores.get("combined_score", float('nan'))
+                comparison_row["education_component_n_gt"] = comp_scores.get("n_gt", 0)
+            except Exception as e:
+                # Silent fallback if component scoring fails
+                comparison_row["education_component_degree_match_score"] = float('nan')
+                comparison_row["education_component_institution_match_score"] = float('nan')
+                comparison_row["education_component_year_match_score"] = float('nan')
+                comparison_row["education_component_combined_score"] = float('nan')
+                comparison_row["education_component_n_gt"] = 0                        
+        
         
         # ─── 6. COMMITTEE_ROLES (ROUGE-1 F-measure text similarity) ───
         if "committee_roles" in gt_cols and "committee_roles" in pred_cols:
@@ -494,17 +542,52 @@ def _evaluate_style(
             style_results["metrics"]["education_rouge1"] = float(ed.get("rouge1"))
             if ed.get("bertscore_f1") is not None:
                 style_results["metrics"]["education_bert"] = float(ed["bertscore_f1"])
-        
+
+
         # Call evaluate_education_components for per-component breakdown
-        # Pass a view with standardised column names the evaluator expects
+        # Parse GT education from JSON strings BEFORE component evaluation
+        def safe_parse_education_json(val):
+            """Convert JSON string to normalized format for parse_education_detailed."""
+            if pd.isna(val) or val == "":
+                return []
+            if isinstance(val, str):
+                try:
+                    parsed = json.loads(val)
+                    # Return the parsed Python list/dict directly, not re-serialized
+                    if isinstance(parsed, list):
+                        return parsed  # Return actual list, not JSON string
+                    return []
+                except (json.JSONDecodeError, TypeError):
+                    return []
+            # Already a list or dict
+            return val if isinstance(val, list) else []
+
         edu_merged = merged.rename(columns={gt_edu_col: "education_text", pred_edu_col: "education"})
-        comp_results = evaluate_education_components(edu_merged)
-        
-        # Surface all component metrics (n_gt is a count, not a score — stored separately)
+
+        # ← KEY: Parse GT education_text from JSON strings
+        edu_merged = edu_merged.copy()
+        edu_merged["education_text"] = edu_merged["education_text"].apply(safe_parse_education_json)
+
+        # Pass bert_scorer to enable component-level BERT scoring
+        comp_results = evaluate_education_components(
+            edu_merged,
+            bert_scorer=bert_score if HAS_BERT_SCORE else None
+        )
+       # Surface all component metrics (exact/fuzzy matching)
         for component_key in ["degree_exact", "institution_fuzzy", "year_exact", "combined_score"]:
             value = comp_results.get(component_key)
             if value is not None and not pd.isna(value):
                 style_results["metrics"][f"education_component_{component_key}"] = float(value)
+
+        # Surface component-level BERT scores (if available)
+        for bert_key in ["degree_bert", "institution_bert", "year_bert", "combined_component_bert"]:
+            if bert_key in comp_results and not pd.isna(comp_results[bert_key]):
+                style_results["metrics"][f"education_component_{bert_key}"] = float(comp_results[bert_key])
+            # Also surface the count of items evaluated
+            count_key = bert_key.replace("_bert", "") + "_n"
+            if count_key in comp_results:
+                style_results[f"education_component_{count_key}"] = int(comp_results[count_key])
+        
         if comp_results.get("n_gt"):
             style_results["education_component_n_gt"] = int(comp_results["n_gt"])
         
@@ -659,12 +742,20 @@ def print_evaluation_summary(results: Dict[str, Any]) -> None:
         "education_bert",
         "committee_roles_rouge1",
         "committee_roles_bert",
+        "education_component_degree_bert",
+        "education_component_institution_bert",  
+        "education_component_year_bert",
+        "education_component_combined_component_bert",
     ]
 
     PERCENT_METRICS = {
         "name_exact", "gender_exact", "religion_hierarchical",
         "birthdate_exact", "birthdate_year",
         "education_rouge1", "committee_roles_rouge1",
+        "education_component_degree_exact",
+        "education_component_institution_fuzzy",
+        "education_component_year_exact",
+        "education_component_combined_score",
     }
 
     rows = {}

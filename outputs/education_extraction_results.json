@@ -1,0 +1,143 @@
+[
+  {
+    "senator_name": "Bernie Sanders",
+    "wikipedia_url": "https://en.wikipedia.org/wiki/Bernie_Sanders",
+    "education": [
+      {
+        "degree": null,
+        "institution": "brooklyn college",
+        "year": null
+      },
+      {
+        "degree": "BA",
+        "institution": "university chicago",
+        "year": null
+      }
+    ],
+    "status": "success"
+  },
+  {
+    "senator_name": "Mitch McConnell",
+    "wikipedia_url": "https://en.wikipedia.org/wiki/Mitch_McConnell",
+    "education": [
+      {
+        "degree": "BA",
+        "institution": "university louisville",
+        "year": null
+      },
+      {
+        "degree": "JD",
+        "institution": "university kentucky",
+        "year": null
+      }
+    ],
+    "status": "success"
+  },
+  {
+    "senator_name": "Kamala Harris",
+    "wikipedia_url": "https://en.wikipedia.org/wiki/Kamala_Harris",
+    "education": [
+      {
+        "degree": "BA",
+        "institution": "howard university",
+        "year": null
+      },
+      {
+        "degree": "JD",
+        "institution": "university california hastings",
+        "year": null
+      }
+    ],
+    "status": "success"
+  },
+  {
+    "senator_name": "JD Vance",
+    "wikipedia_url": "https://en.wikipedia.org/wiki/JD_Vance",
+    "education": [
+      {
+        "degree": "BA",
+        "institution": "ohio state university",
+        "year": null
+      },
+      {
+        "degree": "JD",
+        "institution": "yale university",
+        "year": null
+      }
+    ],
+    "status": "success"
+  },
+  {
+    "senator_name": "Bill Cassidy",
+    "wikipedia_url": "https://en.wikipedia.org/wiki/Bill_Cassidy",
+    "education": [
+      {
+        "degree": "BS",
+        "institution": "louisiana state university",
+        "year": null
+      },
+      {
+        "degree": "MD",
+        "institution": "louisiana state university",
+        "year": null
+      }
+    ],
+    "status": "success"
+  },
+  {
+    "senator_name": "Elizabeth Warren",
+    "wikipedia_url": "https://en.wikipedia.org/wiki/Elizabeth_Warren",
+    "education": [
+      {
+        "degree": null,
+        "institution": "george washington university",
+        "year": null
+      },
+      {
+        "degree": "BS",
+        "institution": "university houston",
+        "year": null
+      },
+      {
+        "degree": "JD",
+        "institution": "rutgers university",
+        "year": null
+      }
+    ],
+    "status": "success"
+  },
+  {
+    "senator_name": "Chuck Schumer",
+    "wikipedia_url": "https://en.wikipedia.org/wiki/Chuck_Schumer",
+    "education": [
+      {
+        "degree": "BA",
+        "institution": "harvard university",
+        "year": null
+      },
+      {
+        "degree": "JD",
+        "institution": "harvard university",
+        "year": null
+      }
+    ],
+    "status": "success"
+  },
+  {
+    "senator_name": "Lindsey Graham",
+    "wikipedia_url": "https://en.wikipedia.org/wiki/Lindsey_Graham",
+    "education": [
+      {
+        "degree": "BA",
+        "institution": "university south carolina",
+        "year": null
+      },
+      {
+        "degree": "JD",
+        "institution": "university south carolina",
+        "year": null
+      }
+    ],
+    "status": "success"
+  }
+]
