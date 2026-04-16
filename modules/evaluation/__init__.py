@@ -18,6 +18,8 @@ from .suite import (
     get_per_row_scores,
     evaluate_all_styles,
     print_evaluation_summary,
+    load_baseline_results,
+    print_baseline_summary,
 )
 from .baselines import (
     RegexBaseline,
@@ -49,6 +51,8 @@ __all__ = [
     "get_per_row_scores",
     "evaluate_all_styles",
     "print_evaluation_summary",
+    "load_baseline_results",
+    "print_baseline_summary",
     # baselines
     "RegexBaseline",
     "SpaCyBaseline",

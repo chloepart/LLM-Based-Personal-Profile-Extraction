@@ -174,34 +174,82 @@ def flatten_task1_results(
     return df_t1
 
 
-def run_baselines(
-    html_files: List[Path],
-    nlp,
-    regex_patterns: Dict = None,
-    output_dir: Path = None
-) -> pd.DataFrame:
+def run_baselines(html_files, nlp, regex_patterns, output_dir):
     """
-    Run all baseline extractors on HTML files.
+    Run all baseline extractors (Regex, Keyword, spaCy, BERT) on HTML files.
     
-    Executes:
-    - Regex baseline: pattern matching for email, phone, names
-    - SpaCy baseline: neural entity recognition for PERSON, ORG, GEO
-    - Keyword baseline: keyword search (on first 10 for speed)
-    
-    Args:
-        html_files: List of HTML file paths
-        nlp: Loaded SpaCy model (from session.nlp)
-        regex_patterns: Regex patterns dict (default: REGEX_PATTERNS)
-        output_dir: Directory to save results (saves if provided)
-        
-    Returns:
-        DataFrame with baseline results
+    Returns dict with baseline metrics and saves results to baseline.csv.
     """
-    
-    if regex_patterns is None:
-        regex_patterns = REGEX_PATTERNS
+    from modules.evaluation.baselines import (
+        RegexBaseline, KeywordSearchBaseline, SpaCyBaseline, BERTBaseline
+    )
     
     baseline_rows = []
+    
+    for hf in tqdm(html_files, desc="Running baselines"):
+        html = hf.read_text(encoding="utf-8", errors="ignore")
+        text = extract_readable_text(html)
+        
+        # Regex and spaCy need plaintext
+        regex_r = RegexBaseline(regex_patterns).extract(text)
+        spacy_r = SpaCyBaseline(nlp).extract(text)
+        
+        # ✅ Keyword search needs ORIGINAL HTML to parse structure
+        keyword_r = KeywordSearchBaseline().extract(html)  # ← Pass html, not text
+        
+        bert_r = BERTBaseline().extract(text)
+        
+        # Helper: Count education entries for compatibility with get_baseline_accuracy
+        spacy_education_entries = 0
+        spacy_education_list = spacy_r.get("education")
+        if spacy_education_list and isinstance(spacy_education_list, list):
+            spacy_education_entries = len(spacy_education_list)
+        
+        # Helper: Count committee roles for compatibility with get_baseline_accuracy
+        spacy_committee_count = 0
+        spacy_committee_list = spacy_r.get("committee_roles")
+        if spacy_committee_list and isinstance(spacy_committee_list, list):
+            spacy_committee_count = len(spacy_committee_list)
+        
+        # Append row with spaCy vanilla output
+        baseline_rows.append({
+            "senator_id": hf.stem,
+            
+            # Regex baseline
+            "regex_name": regex_r["full_name"],
+            "regex_email_found": 1 if regex_r["email"] else 0,
+            "regex_phone_found": 1 if regex_r["phone"] else 0,
+            
+            # Keyword baseline
+            "keyword_name": keyword_r.get("name"),
+            "keyword_email": keyword_r.get("email"),
+            "keyword_phone": keyword_r.get("phone"),
+            "keyword_education": keyword_r.get("education"),
+            
+            # spaCy baseline (vanilla NER extraction + domain heuristics)
+            "spacy_name": spacy_r["name"],
+            "spacy_state": spacy_r["state"],
+            "spacy_affiliation": spacy_r["affiliation"],
+            "spacy_occupation": spacy_r["occupation"],
+            "spacy_education": spacy_r.get("education"),
+            "spacy_education_entries": spacy_education_entries,  # Count for get_baseline_accuracy
+            "spacy_committee_roles": spacy_r.get("committee_roles"),
+            "spacy_committee_count": spacy_committee_count,  # Count for evaluation
+            
+            # BERT baseline
+            "bert_persons_found": len(bert_r.get("persons_detected", [])) if "error" not in bert_r else 0,
+            "bert_orgs_found": len(bert_r.get("orgs_detected", [])) if "error" not in bert_r else 0,
+        })
+    
+    # Save to CSV
+    df_bl = pd.DataFrame(baseline_rows)
+    df_bl.to_csv(output_dir / "baselines.csv", index=False)
+    
+    print(f"\n✓ Baseline extraction complete: {len(df_bl)} senators")
+    print(f"  Results saved to: {output_dir / 'baselines.csv'}")
+    
+    return df_bl
+
     
     # ─────────────────────────────────────────────────────────────────────
     # Run regex + spaCy on all files
@@ -219,13 +267,32 @@ def run_baselines(
         # SpaCy extraction
         spacy_r = spacy_extract(text, nlp)
         
+        # Helper: Count education entries
+        spacy_education_entries = 0
+        spacy_education_list = spacy_r.get("education")
+        if spacy_education_list and isinstance(spacy_education_list, list):
+            spacy_education_entries = len(spacy_education_list)
+        
+        # Helper: Count committee roles
+        spacy_committee_count = 0
+        spacy_committee_list = spacy_r.get("committee_roles")
+        if spacy_committee_list and isinstance(spacy_committee_list, list):
+            spacy_committee_count = len(spacy_committee_list)
+        
         baseline_rows.append({
             "senator_id": hf.stem,
             "regex_name": regex_r["full_name"],
             "regex_email_found": 1 if regex_r["email"] else 0,
             "regex_phone_found": 1 if regex_r["phone"] else 0,
-            "spacy_top_person": spacy_r["persons_detected"][0] if spacy_r["persons_detected"] else None,
-            "spacy_orgs_count": len(spacy_r["orgs_detected"]),
+            # spaCy now returns comprehensive extraction including education and committee roles
+            "spacy_name": spacy_r.get("name"),
+            "spacy_state": spacy_r.get("state"),
+            "spacy_affiliation": spacy_r.get("affiliation"),
+            "spacy_occupation": spacy_r.get("occupation"),
+            "spacy_education": spacy_r.get("education"),
+            "spacy_education_entries": spacy_education_entries,  # Count for get_baseline_accuracy
+            "spacy_committee_roles": spacy_r.get("committee_roles"),
+            "spacy_committee_count": spacy_committee_count,  # Count for evaluation
         })
     
     df_bl = pd.DataFrame(baseline_rows)

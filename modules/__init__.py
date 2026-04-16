@@ -13,7 +13,7 @@ All exports are re-exported here for backward compatibility.
 """
 
 # Re-export from submodules
-from .api import call_groq
+from .api import call_groq, run_pipeline
 from .config import (
     PATHS,
     TASK1_DIRECT,
@@ -58,6 +58,8 @@ from .evaluation import (
     get_per_row_scores,
     evaluate_all_styles,
     print_evaluation_summary,
+    load_baseline_results,
+    print_baseline_summary,
     RegexBaseline,
     SpaCyBaseline,
     KeywordSearchBaseline,
@@ -106,6 +108,9 @@ __all__ = [
     "GT_FIELDS",
     "REGEX_PATTERNS",
     "RELIGION_HIERARCHY",
+    # api
+    "call_groq",
+    "run_pipeline",
     # logging_config
     "setup_logging",
     "get_logger",
@@ -153,6 +158,8 @@ __all__ = [
     "get_per_row_scores",
     "evaluate_all_styles",
     "print_evaluation_summary",
+    "load_baseline_results",
+    "print_baseline_summary",
     # session_init (Phase 2)
     "initialize_pipeline_session",
     # pipeline_runner (Phase 3)

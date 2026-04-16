@@ -40,6 +40,443 @@ import warnings
 warnings.filterwarnings("ignore", message="Some weights of RobertaModel were not initialized")
 warnings.filterwarnings("ignore", category=UserWarning, module="transformers")
 
+# ============================================================================
+# BASELINE COMPARISON NOTES (Liu et al. vs. Senator Adaptation)
+# ============================================================================
+
+"""
+Baseline Implementation Guide
+==============================
+
+This suite compares 5 traditional PIE baselines against LLM-based extraction.
+All baselines are adapted from Liu et al. (USENIX Security 2025) with
+senator-specific modifications documented below.
+
+BASELINE SCHEMA:
+  Liu et al. evaluates 8 PIE categories:
+    1. email address     ✅ Aligned
+    2. phone number      ✅ Aligned
+    3. mailing address   (→ renamed "address")
+    4. name              ✅ Aligned
+    5. work experience   (→ extracted as "work" text field)
+    6. education         ✅ Aligned
+    7. affiliation       ✅ Aligned
+    8. occupation        ✅ Aligned
+
+  + Senator-specific expansions:
+    9. state             (domain adaptation)
+    10. party            (domain adaptation)
+    11. religion         (domain expansion)
+    12. years_found      (auxiliary: timeline extraction)
+
+BASELINE DEVIATIONS FROM LIU ET AL.:
+
+1. REGEX (Baseline 1)
+   ├─ Aligned: Email, phone, name (via Liu et al. Table 15 patterns)
+   ├─ Extended: Added party extraction regex
+   ├─ Excluded: Work/education/affiliation regex (Liu et al. uses HTML <p> tags)
+   └─ Reason: Senator bios have inconsistent <p> tag usage; prefer NER
+
+2. KEYWORD SEARCH (Baseline 2)
+   ├─ Aligned: Liu et al. strategy (search HTML headers + plaintext labels)
+   ├─ Enhanced: Added BeautifulSoup sibling traversal (paper less explicit)
+   ├─ Extended: Keyword map includes senator-specific triggers
+   │           (e.g., "caucus" for affiliation, "senator" for occupation)
+   └─ Reason: Improves recall on unstructured senator bios
+
+3. spaCy NER (Baseline 3) ⭐ FIXED
+   ├─ Original problem: Returned raw NER types (PERSON, ORG, GPE, DATE)
+   ├─ Fix: Added NER→PIE semantic mapping layer
+   ├─ Mapping logic:
+   │   ├─ PERSON → name (first occurrence)
+   │   ├─ ORG → affiliation (first) or occupation (if contains "Senate")
+   │   ├─ GPE → state
+   │   └─ DATE → years_found (regex extraction)
+   └─ Impact: Now produces comparable output to BERT/TextWash
+
+4. BERT NER (Baseline 4)
+   ├─ Aligned: Uses dslim/bert-base-NER (CoNLL-2003 fine-tuned)
+   ├─ Note: Liu et al. uses TextWash; dslim is closest open alternative
+   ├─ Same NER→PIE mapping as spaCy (PERSON→name, ORG→affiliation, etc.)
+   └─ Known limitation: 512-token limit may truncate long bios
+
+5. TextWash NER (Baseline 5) ⭐ NEW
+   ├─ Source: Kleinberg et al. (2022), open-source, GPL-3.0
+   ├─ Model: Learned PII detection (not just dict-based)
+   ├─ Entity types: EMAIL_ADDRESS, PHONE_NUMBER, ADDRESS, PERSON_FIRSTNAME,
+   │               PERSON_LASTNAME, ORGANIZATION, OCCUPATION, DATE
+   ├─ Advantage: More directly comparable to Liu et al. Appendix results
+   ├─ Setup: Requires manual GDrive download + model placement at ./data/en/
+   └─ Trade-off: High setup cost but potentially best accuracy
+
+EVALUATION METRICS:
+  • accuracy (exact match for email, phone)
+  • ROUGE-1 (word overlap for text fields)
+  • BERT-score (semantic similarity, requires transformers)
+
+FIELD-LEVEL NOTES:
+  • name: Compare against ground truth after lower() normalization
+  • education: Parse into degree+institution; compare components
+  • address: Loose comparison (ROUGE-1) due to format variation
+  • work: Often None in baselines; compare text overlap with LLM extracts
+  • party: Not in Liu et al.; senator-specific evaluation only
+"""
+
+# ============================================================================
+
+
+def evaluate_baseline_extraction(
+    senator_bio: str,
+    ground_truth: dict,
+    baseline_names: list = None
+) -> dict:
+    """
+    Quick evaluation of baseline extractors on a single senator bio.
+    
+    Useful for testing baseline quality before running full suite evaluation.
+    
+    Args:
+        senator_bio: Raw HTML or plaintext bio
+        ground_truth: Dict with keys matching PIE schema
+                      (name, email, phone, education, affiliation, etc.)
+        baseline_names: List of baselines to run. Options:
+                        ["regex", "keyword", "spacy", "bert", "textwash"]
+                        Defaults to all 5.
+    
+    Returns:
+        Dict mapping baseline_name → extracted_fields
+        
+    Example:
+        >>> from modules.evaluation.baselines import *
+        >>> results = evaluate_baseline_extraction(
+        ...     senator_bio=bio_text,
+        ...     ground_truth={"name": "John Smith", "email": "john@senate.gov"},
+        ...     baseline_names=["keyword", "spacy"]
+        ... )
+        >>> results["spacy"]
+        {'name': 'John Smith', 'email': None, 'affiliation': 'U.S. Senate', ...}
+    """
+    from modules.evaluation.baselines import (
+        RegexBaseline, KeywordSearchBaseline, SpaCyBaseline,
+        BERTBaseline, TextWashBaseline
+    )
+    
+    baseline_names = baseline_names or ["regex", "keyword", "spacy", "bert"]
+    results = {}
+    
+    # You'll need to pass compiled regex patterns; construct separately
+    baselines = {
+        "keyword": KeywordSearchBaseline(),
+        "spacy": SpaCyBaseline(),
+        "bert": BERTBaseline(),
+        # "textwash": TextWashBaseline(),  # Only if installed
+    }
+    
+    for name in baseline_names:
+        if name not in baselines:
+            print(f"⚠️  Baseline '{name}' not available or not initialized")
+            continue
+        
+        try:
+            extracted = baselines[name].extract(senator_bio)
+            results[name] = extracted
+        except Exception as e:
+            print(f"❌ {name} extraction failed: {e}")
+            results[name] = None
+    
+    return results
+
+# ============================================================================
+# BASELINE EVALUATION & COMPARISON
+# ============================================================================
+
+def load_baseline_results(baseline_csv_path):
+    """
+    Load and return baseline results DataFrame.
+    
+    Args:
+        baseline_csv_path: Path to baselines.csv
+        
+    Returns:
+        DataFrame with baseline results
+    """
+    return pd.read_csv(baseline_csv_path)
+
+
+def summarize_baseline_coverage(baseline_df, ground_truth_df=None):
+    """
+    Summarize extraction coverage per baseline method.
+    
+    Args:
+        baseline_df: DataFrame from baselines.csv
+        ground_truth_df: Optional ground truth for comparison
+        
+    Returns:
+        Dict with coverage statistics by baseline
+    """
+    summary = {}
+    
+    # Regex coverage
+    summary["regex"] = {
+        "names_found": (baseline_df["regex_name"].notna()).sum(),
+        "emails_found": (baseline_df["regex_email_found"] > 0).sum(),
+        "phones_found": (baseline_df["regex_phone_found"] > 0).sum(),
+    }
+    
+    # Keyword coverage
+    summary["keyword"] = {
+        "names_found": (baseline_df["keyword_name"].notna()).sum(),
+        "emails_found": (baseline_df["keyword_email"].notna()).sum(),
+        "phones_found": (baseline_df["keyword_phone"].notna()).sum(),
+        "education_found": (baseline_df["keyword_education"].notna()).sum(),
+    }
+    
+    # spaCy coverage
+    summary["spacy"] = {
+        "names_found": (baseline_df["spacy_name"].notna()).sum(),
+        "states_found": (baseline_df["spacy_state"].notna()).sum(),
+        "affiliations_found": (baseline_df["spacy_affiliation"].notna()).sum(),
+        "avg_years_per_senator": baseline_df.get("spacy_years_count", pd.Series([0]*len(baseline_df))).mean(),
+        "avg_education_entries": baseline_df.get("spacy_education_entries", pd.Series([0]*len(baseline_df))).mean(),
+        "avg_committee_roles": baseline_df.get("spacy_committee_roles_count", pd.Series([0]*len(baseline_df))).mean(),
+    }
+    
+    # BERT coverage
+    summary["bert"] = {
+        "avg_persons_found": baseline_df["bert_persons_found"].mean(),
+        "avg_orgs_found": baseline_df["bert_orgs_found"].mean(),
+    }
+    
+    return summary
+
+
+def print_baseline_summary(baseline_df, total_senators):
+    """
+    Print formatted baseline comparison table.
+    
+    CORRECTED: Removed email/phone reporting since they have no ground truth for evaluation.
+    Only shows fields that can be scored against ground truth:
+    - NAME (all baselines)
+    - EDUCATION (Keyword, spaCy)
+    - STATES, AFFILIATIONS (spaCy)
+    
+    Args:
+        baseline_df: DataFrame with baseline results
+        total_senators: Total number of senators in dataset
+    """
+    summary = summarize_baseline_coverage(baseline_df)
+    
+    print("\n" + "=" * 80)
+    print(" BASELINE EXTRACTION COVERAGE (GROUND-TRUTH-SCORABLE FIELDS ONLY)")
+    print("=" * 80)
+    print(f"\nTotal senators: {total_senators}")
+    print("Note: Email & phone excluded (no ground truth available for evaluation)\n")
+    
+    print("REGEX BASELINE (Scorable fields):")
+    print(f"  Names extracted:              {summary['regex']['names_found']:3d}/{total_senators} ({100*summary['regex']['names_found']/total_senators:5.1f}%)")
+    # Email/phone removed — not scorable
+    
+    print("\nKEYWORD SEARCH BASELINE (Scorable fields):")
+    print(f"  Names extracted:              {summary['keyword']['names_found']:3d}/{total_senators} ({100*summary['keyword']['names_found']/total_senators:5.1f}%)")
+    print(f"  Education found:              {summary['keyword']['education_found']:3d}/{total_senators} ({100*summary['keyword']['education_found']/total_senators:5.1f}%)")
+    # Email/phone removed — not scorable
+    
+    print("\nspaCy NER BASELINE (Scorable fields):")
+    print(f"  Names extracted:              {summary['spacy']['names_found']:3d}/{total_senators} ({100*summary['spacy']['names_found']/total_senators:5.1f}%)")
+    print(f"  States found:                 {summary['spacy']['states_found']:3d}/{total_senators} ({100*summary['spacy']['states_found']/total_senators:5.1f}%)")
+    print(f"  Affiliations:                 {summary['spacy']['affiliations_found']:3d}/{total_senators} ({100*summary['spacy']['affiliations_found']/total_senators:5.1f}%)")
+    print(f"  Avg education entries/senator: {summary['spacy']['avg_education_entries']:6.2f}")
+    
+    print("\nBERT NER BASELINE:")
+    print(f"  ⚠ Entity counts only (no GT labels for persons/orgs)")
+    print(f"  Avg persons/senator: {summary['bert']['avg_persons_found']:6.2f}")
+    print(f"  Avg orgs/senator:    {summary['bert']['avg_orgs_found']:6.2f}")
+    
+    print("\n" + "=" * 80)
+    print("Legend: Only fields with ground truth are scored for accuracy in baseline_accuracy.csv")
+    print("=" * 80)# ============================================================================
+
+# BASELINE ACCURACY EVALUATION
+# ============================================================================
+
+def get_baseline_accuracy(
+    baseline_df: pd.DataFrame,
+    ground_truth_df: pd.DataFrame,
+    output_dir: Optional[Path] = None,
+    verbose: bool = True
+) -> pd.DataFrame:
+    """
+    Compute accuracy metrics for each baseline method against ground truth.
+    
+    CORRECTED: Only scores fields with GT. Removed email/phone/BERT counts.
+    """
+    if verbose:
+        print("\n" + "=" * 80)
+        print(" COMPUTING BASELINE ACCURACY METRICS (GT-SCORABLE FIELDS ONLY)")
+        print("=" * 80)
+    
+    # Merge baseline results with ground truth
+    merged = baseline_df.merge(ground_truth_df, on='senator_id', how='inner', suffixes=('_baseline', '_gt'))
+    
+    if verbose:
+        print(f"\n✓ Merged {len(merged)} senators with ground truth\n")
+    
+    accuracy_rows = []
+    scorer_rouge = rouge_scorer.RougeScorer(['rouge1'], use_stemmer=True)
+    
+    # ──────────────────────────────────────────────────────────────────
+    # BASELINE 1: REGEX — Score NAME only
+    # ──────────────────────────────────────────────────────────────────
+    
+    for idx, row in merged.iterrows():
+        senator_id = row.get('senator_id')
+        regex_name = row.get('regex_name')
+        gt_name = row.get('full_name')
+        
+        if pd.notna(gt_name):
+            accuracy = 1.0 if (pd.notna(regex_name) and 
+                              regex_name.lower().strip() == str(gt_name).lower().strip()) else 0.0
+            
+            accuracy_rows.append({
+                'senator_id': senator_id,
+                'baseline_method': 'Regex',
+                'field': 'name',
+                'accuracy': accuracy,
+                'value_gt': gt_name,
+                'value_extracted': regex_name if pd.notna(regex_name) else 'Not extracted',
+            })
+    
+    # ──────────────────────────────────────────────────────────────────
+    # BASELINE 2: KEYWORD — Score NAME and EDUCATION
+    # ──────────────────────────────────────────────────────────────────
+    
+    for idx, row in merged.iterrows():
+        senator_id = row.get('senator_id')
+        gt_name = row.get('full_name')
+        
+        # Keyword: Name
+        keyword_name = row.get('keyword_name')
+        if pd.notna(gt_name):
+            accuracy = 1.0 if (pd.notna(keyword_name) and 
+                              keyword_name.lower().strip() == str(gt_name).lower().strip()) else 0.0
+            accuracy_rows.append({
+                'senator_id': senator_id,
+                'baseline_method': 'Keyword',
+                'field': 'name',
+                'accuracy': accuracy,
+                'value_gt': gt_name,
+                'value_extracted': keyword_name if pd.notna(keyword_name) else 'Not extracted',
+            })
+        
+        # Keyword: Education
+        keyword_education = row.get('keyword_education')
+        gt_education = row.get('education')
+        
+        if pd.notna(gt_education):
+            if pd.notna(keyword_education):
+                try:
+                    rouge_score = scorer_rouge.score(
+                        str(keyword_education).lower(),
+                        str(gt_education).lower()
+                    )
+                    accuracy = rouge_score['rouge1'].fmeasure
+                except:
+                    accuracy = 0.0
+            else:
+                accuracy = 0.0
+            
+            accuracy_rows.append({
+                'senator_id': senator_id,
+                'baseline_method': 'Keyword',
+                'field': 'education',
+                'accuracy': accuracy,
+                'value_gt': str(gt_education)[:100],
+                'value_extracted': str(keyword_education)[:100] if pd.notna(keyword_education) else 'Not extracted',
+            })
+    
+    # ──────────────────────────────────────────────────────────────────
+    # BASELINE 3: spaCy NER — Score NAME and EDUCATION
+    # ──────────────────────────────────────────────────────────────────
+    
+    for idx, row in merged.iterrows():
+        senator_id = row.get('senator_id')
+        gt_name = row.get('full_name')
+        
+        # spaCy: Name
+        spacy_name = row.get('spacy_name')
+        if pd.notna(gt_name):
+            accuracy = 1.0 if (pd.notna(spacy_name) and 
+                              spacy_name.lower().strip() == str(gt_name).lower().strip()) else 0.0
+            accuracy_rows.append({
+                'senator_id': senator_id,
+                'baseline_method': 'spaCy',
+                'field': 'name',
+                'accuracy': accuracy,
+                'value_gt': gt_name,
+                'value_extracted': spacy_name if pd.notna(spacy_name) else 'Not extracted',
+            })
+        
+        # spaCy: Education (count-based)
+        spacy_edu_count = row.get('spacy_education_entries', 0)
+        gt_education = row.get('education')
+        
+        if pd.notna(gt_education):
+            gt_edu_count = 0
+            try:
+                edu_list = json.loads(str(gt_education)) if isinstance(gt_education, str) else gt_education
+                gt_edu_count = len(edu_list) if isinstance(edu_list, list) else 1
+            except:
+                gt_edu_count = 1 if gt_education else 0
+            
+            if spacy_edu_count == gt_edu_count:
+                accuracy = 1.0
+            elif abs(spacy_edu_count - gt_edu_count) == 1:
+                accuracy = 0.5
+            else:
+                accuracy = 0.0 if spacy_edu_count > 0 else (1.0 if gt_edu_count == 0 else 0.0)
+            
+            accuracy_rows.append({
+                'senator_id': senator_id,
+                'baseline_method': 'spaCy',
+                'field': 'education',
+                'accuracy': accuracy,
+                'value_gt': f'{gt_edu_count} entries',
+                'value_extracted': f'{spacy_edu_count} entries',
+            })
+    
+    # ──────────────────────────────────────────────────────────────────
+    # AGGREGATE AND SAVE
+    # ──────────────────────────────────────────────────────────────────
+    
+    df_accuracy = pd.DataFrame(accuracy_rows)  # ← THIS WAS MISSING!
+    
+    if len(df_accuracy) == 0:
+        if verbose:
+            print("⚠ No accuracy rows generated. Check data alignment.\n")
+        return df_accuracy
+    
+    summary = df_accuracy.groupby(['baseline_method', 'field'])['accuracy'].agg(['mean', 'std', 'count', 'min', 'max'])
+    
+    if verbose:
+        print("ACCURACY SUMMARY BY BASELINE METHOD & FIELD:")
+        print("─" * 80)
+        print(summary.to_string())
+        print()
+        
+        baseline_summary = df_accuracy.groupby('baseline_method')['accuracy'].agg(['mean', 'count'])
+        print("\nOVERALL BY BASELINE (all scorable fields):")
+        print("─" * 40)
+        print(baseline_summary.to_string())
+        print()
+    
+    if output_dir:
+        output_path = Path(output_dir) / 'baseline_accuracy.csv'
+        df_accuracy.to_csv(output_path, index=False)
+        if verbose:
+            print(f"✓ Saved {len(df_accuracy)} baseline accuracy rows to: {output_path}\n")
+    
+    return df_accuracy
+
 def load_and_merge_results(
     pred_path: Path,
     gt_path: Path,

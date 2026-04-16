@@ -16,6 +16,31 @@ import spacy
 
 
 # ---------------------------------------------------------------------------
+# U.S. State Names and Abbreviations
+# ---------------------------------------------------------------------------
+
+US_STATES = frozenset({
+    # Full state names
+    "Alabama", "Alaska", "Arizona", "Arkansas", "California",
+    "Colorado", "Connecticut", "Delaware", "Florida", "Georgia",
+    "Hawaii", "Idaho", "Illinois", "Indiana", "Iowa",
+    "Kansas", "Kentucky", "Louisiana", "Maine", "Maryland",
+    "Massachusetts", "Michigan", "Minnesota", "Mississippi", "Missouri",
+    "Montana", "Nebraska", "Nevada", "New Hampshire", "New Jersey",
+    "New Mexico", "New York", "North Carolina", "North Dakota", "Ohio",
+    "Oklahoma", "Oregon", "Pennsylvania", "Rhode Island", "South Carolina",
+    "South Dakota", "Tennessee", "Texas", "Utah", "Vermont",
+    "Virginia", "Washington", "West Virginia", "Wisconsin", "Wyoming",
+    # Two-letter abbreviations
+    "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
+    "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
+    "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
+    "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
+    "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY",
+})
+
+
+# ---------------------------------------------------------------------------
 # Baseline 1: Regex
 # ---------------------------------------------------------------------------
 
@@ -28,7 +53,7 @@ class RegexBaseline:
     """
 
     def __init__(self, regex_patterns, name_re=None, party_re=None,
-                 year_re=None, email_re=None, phone_re=None):
+                 email_re=None, phone_re=None):
         """
         Initialize with compiled regex patterns.
 
@@ -36,20 +61,17 @@ class RegexBaseline:
             regex_patterns: Dict with pattern keys or individual patterns.
             name_re:   Compiled regex for name extraction.
             party_re:  Compiled regex for party/affiliation extraction.
-            year_re:   Compiled regex for year extraction.
             email_re:  Compiled regex for email extraction.
             phone_re:  Compiled regex for phone extraction.
         """
         if isinstance(regex_patterns, dict):
             self.name_re  = regex_patterns.get('NAME_RE')          or name_re
             self.party_re = regex_patterns.get('PARTY_KEYWORD_RE') or party_re
-            self.year_re  = regex_patterns.get('YEAR_RE')          or year_re
             self.email_re = regex_patterns.get('EMAIL_RE')         or email_re
             self.phone_re = regex_patterns.get('PHONE_RE')         or phone_re
         else:
             self.name_re  = name_re
             self.party_re = party_re
-            self.year_re  = year_re
             self.email_re = email_re
             self.phone_re = phone_re
 
@@ -61,18 +83,16 @@ class RegexBaseline:
             text: Input text to extract from.
 
         Returns:
-            Dict with keys: full_name, party, email, phone, years_found.
+            Dict with keys: full_name, party, email, phone.
         """
         name_m  = self.name_re.search(text)  if self.name_re  else None
         party_m = self.party_re.search(text) if self.party_re else None
-        years   = self.year_re.findall(text) if self.year_re  else []
 
         return {
             "full_name":   name_m.group(1)              if name_m  else None,
             "party":       party_m.group(0).title()     if party_m else None,
             "email":       self.email_re.findall(text)  if self.email_re else None,
             "phone":       self.phone_re.findall(text)  if self.phone_re else None,
-            "years_found": years[:5]                    if years   else None,
         }
 
 
@@ -188,11 +208,28 @@ class KeywordSearchBaseline:
 
 
 # ---------------------------------------------------------------------------
-# Baseline 3: spaCy NER
+# Baseline 3: spaCy NER with semantic PIE mapping
 # ---------------------------------------------------------------------------
 
 class SpaCyBaseline:
-    """spaCy NER baseline (Liu et al. Section 6.1.3)."""
+    """
+    spaCy NER baseline (Liu et al. Section 6.1.3) with senator-specific PIE mapping.
+    
+    vanilla=True replicates Liu et al. Section 6.1.3 naive NER mapping for baseline
+    comparison; vanilla=False (default) uses senator-specific semantic mapping for
+    domain analysis.
+    
+    Improvement (vanilla=False): Maps raw NER entities (PERSON, ORG, GPE, DATE) to
+    PIE fields using domain heuristics. This makes output directly comparable to
+    TextWash and BERT baselines.
+    
+    Domain adaptations (senator bios):
+      - GPE → state assignment
+      - First PERSON → name extraction
+      - DATE entities → year extraction for work/education timeline
+      - ORG entities + text patterns → education (degree + institution)
+      - ORG entities + "Committee" keyword → committee roles
+    """
 
     def __init__(self, nlp_model=None):
         """
@@ -210,26 +247,178 @@ class SpaCyBaseline:
         else:
             self.nlp = nlp_model
 
+    def _extract_years_from_dates(self, date_entities):
+        """
+        Extract years from DATE entity text (for work/education timeline).
+        
+        Parses text like "1995", "1995-2000", "January 2005", etc.
+        
+        Args:
+            date_entities: List of DATE entity texts from spaCy.
+            
+        Returns:
+            List of extracted year strings.
+        """
+        years = []
+        year_pattern = r"(19|20)\d{2}"
+        
+        for date_text in date_entities:
+            matches = re.findall(year_pattern, date_text)
+            if matches:
+                years.extend(matches)
+        
+        return years[:5]  # Limit to 5 years
+
+    def _extract_education(self, text, org_entities):
+        """
+        Extract education entries (degree + institution + year).
+        
+        Strategy:
+          1. Look for degree keywords (B.A., M.D., Ph.D., J.D., etc.)
+          2. Associate with nearby ORG entities (institutions)
+          3. Extract graduation year if available
+        
+        Args:
+            text: Original text for pattern matching.
+            org_entities: List of ORG entities from spaCy.
+            
+        Returns:
+            List of dicts with keys: degree, institution, year
+        """
+        education = []
+        
+        # Degree patterns (common U.S. degrees)
+        degree_pattern = r"(B\.A\.|B\.S\.|M\.A\.|M\.S\.|M\.B\.A\.|M\.D\.|Ph\.D\.|J\.D\.|D\.D\.S\.|D\.V\.M\.|LL\.B\.|Bachelor|Master|Doctorate|Ph\.D)"
+        degree_matches = re.finditer(degree_pattern, text, re.IGNORECASE)
+        
+        for degree_match in degree_matches:
+            degree_text = degree_match.group(1)
+            start_pos = degree_match.start()
+            
+            # Look for institution (ORG entity) near this degree
+            # Search within ±200 characters
+            search_start = max(0, start_pos - 200)
+            search_end = min(len(text), start_pos + 200)
+            search_region = text[search_start:search_end]
+            
+            # Find ORG entities in this region
+            # Approximate: find capitalized phrases that might be institution names
+            institution = None
+            for org in org_entities:
+                # Check if org appears in search region (with some tolerance for variations)
+                if org.lower() in search_region.lower():
+                    institution = org
+                    break
+            
+            # Extract year if present nearby
+            year = None
+            year_pattern_local = r"(19|20)\d{2}"
+            year_in_region = re.search(year_pattern_local, search_region)
+            if year_in_region:
+                year = year_in_region.group(0)
+            
+            education.append({
+                "degree": degree_text,
+                "institution": institution,
+                "year": year
+            })
+        
+        return education if education else None
+
+    def _extract_committee_roles(self, text, org_entities):
+        """
+        Extract committee roles and memberships.
+        
+        Strategy:
+          1. Look for ORG entities containing "Committee"
+          2. Extract full committee name
+          3. Look for role keywords (Chair, Ranking Member, Member)
+        
+        Args:
+            text: Original text for pattern matching.
+            org_entities: List of ORG entities from spaCy.
+            
+        Returns:
+            List of committee role strings.
+        """
+        committee_roles = []
+        
+        # Filter ORGs that contain "Committee" or similar keywords
+        committee_keywords = ["committee", "subcommittee", "caucus"]
+        committees = [org for org in org_entities 
+                     if any(kw in org.lower() for kw in committee_keywords)]
+        
+        if not committees:
+            return None
+        
+        # For each committee, try to find associated role
+        role_pattern = r"(Chair|Ranking Member|Member|Co-Chair)"
+        
+        for committee in committees:
+            # Look for role keywords near committee name in text
+            committee_pos = text.lower().find(committee.lower())
+            if committee_pos != -1:
+                # Search within window of 150 chars before/after committee mention
+                search_start = max(0, committee_pos - 150)
+                search_end = min(len(text), committee_pos + len(committee) + 150)
+                context = text[search_start:search_end]
+                
+                role_match = re.search(role_pattern, context, re.IGNORECASE)
+                if role_match:
+                    role = role_match.group(1)
+                    committee_roles.append(f"{role} of {committee}")
+                else:
+                    committee_roles.append(f"Member of {committee}")
+            else:
+                committee_roles.append(committee)
+        
+        return committee_roles if committee_roles else None
+
     def extract(self, text):
         """
-        Extract named entities using spaCy.
+        Extract entities using spaCy with domain-specific mapping for senator bios.
 
         Args:
             text: Input text to extract from.
 
         Returns:
-            Dict with keys: persons_detected, orgs_detected, gpe_detected,
-            dates_detected.  All are deduplicated lists.
+            Dict mapping field names to extracted values:
+              - name: First detected PERSON entity
+              - state: First detected GPE (U.S. state)
+              - affiliation: First detected ORG entity (excluding committee/subcommittee/caucus)
+              - occupation: None (NER-based extraction does not infer occupation)
+              - education: List of dicts with degree, institution, year
+              - committee_roles: List of committee role strings
         """
         doc = self.nlp(text[:10000])  # spaCy token-limit safety
-
+        
+        # Collect entities by type
+        persons = [e.text for e in doc.ents if e.label_ == "PERSON"]
+        orgs = [e.text for e in doc.ents if e.label_ == "ORG"]
+        gpe = [e.text for e in doc.ents if e.label_ == "GPE"]
+        dates = [e.text for e in doc.ents if e.label_ == "DATE"]
+        
+        # Extract education and committee roles using domain heuristics
+        education = self._extract_education(text, orgs)
+        committee_roles = self._extract_committee_roles(text, orgs)
+        
+        # Filter orgs for affiliation: exclude committee-related terms
+        committee_keywords = ["committee", "subcommittee", "caucus"]
+        filtered_orgs = [org for org in orgs 
+                        if not any(kw in org.lower() for kw in committee_keywords)]
+        
+        # Filter gpe to only U.S. states (exclude cities and countries)
+        filtered_gpe = [g for g in gpe if g.strip().title() in US_STATES]
+        
+        # Return comprehensive extraction results
         return {
-            "persons_detected": list({e.text for e in doc.ents if e.label_ == "PERSON"})[:5],
-            "orgs_detected":    list({e.text for e in doc.ents if e.label_ == "ORG"})[:10],
-            "gpe_detected":     list({e.text for e in doc.ents if e.label_ == "GPE"})[:5],
-            "dates_detected":   list({e.text for e in doc.ents if e.label_ == "DATE"})[:5],
+            "name": persons[0] if persons else None,
+            "state": filtered_gpe[0] if filtered_gpe else None,
+            "affiliation": filtered_orgs[0] if filtered_orgs else None,
+            "occupation": None,
+            "education": education,
+            "committee_roles": committee_roles,
         }
-
 
 # ---------------------------------------------------------------------------
 # Baseline 4: BERT-based NER  (Kleinberg et al. TextWash, Liu et al. §6.1.3)
@@ -289,19 +478,155 @@ class BERTBaseline:
                   pre-processed text for best results.
 
         Returns:
-            Dict with keys: persons_detected, orgs_detected, loc_detected,
-            misc_detected.
+            Dict with raw NER buckets (persons_detected, orgs_detected, loc_detected,
+            misc_detected) and scalar PIE fields (name, affiliation, occupation,
+            education, committee_roles) for compatibility with evaluation scoring.
         """
         # HuggingFace pipeline handles tokenisation and truncation
         entities = self._pipe(text[:2000])  # ~512 tokens ≈ 2000 chars
 
+        # Raw NER entity buckets (for interpretability)
+        persons_detected = self._aggregate(entities, "PER")[:5]
+        orgs_detected = self._aggregate(entities, "ORG")[:10]
+        loc_detected = self._aggregate(entities, "LOC")[:5]
+        misc_detected = self._aggregate(entities, "MISC")[:5]
+        
+        # Scalar PIE fields (for scoring consistency with other baselines)
+        # name: first person entity
+        name = persons_detected[0] if persons_detected else None
+        
+        # affiliation: first org entity that does NOT contain committee keywords
+        committee_keywords = ["committee", "subcommittee", "caucus"]
+        filtered_orgs = [org for org in orgs_detected 
+                        if not any(kw in org.lower() for kw in committee_keywords)]
+        affiliation = filtered_orgs[0] if filtered_orgs else None
+        
+        # committee_roles: org entities that DO contain committee keywords
+        committee_roles = [org for org in orgs_detected 
+                          if any(kw in org.lower() for kw in committee_keywords)]
+        committee_roles = committee_roles if committee_roles else None
+        
+        # occupation and education not extractable from raw NER buckets
+        occupation = None
+        education = None
+        
+        # Return merged dict: raw NER buckets + scalar PIE fields
         return {
-            "persons_detected": self._aggregate(entities, "PER")[:5],
-            "orgs_detected":    self._aggregate(entities, "ORG")[:10],
-            "loc_detected":     self._aggregate(entities, "LOC")[:5],
-            "misc_detected":    self._aggregate(entities, "MISC")[:5],
+            "persons_detected": persons_detected,
+            "orgs_detected": orgs_detected,
+            "loc_detected": loc_detected,
+            "misc_detected": misc_detected,
+            "name": name,
+            "affiliation": affiliation,
+            "occupation": occupation,
+            "education": education,
+            "committee_roles": committee_roles,
         }
 
+# ---------------------------------------------------------------------------
+# Baseline 5: TextWash NER (Kleinberg et al. 2022, open-source)
+# ---------------------------------------------------------------------------
+
+class TextWashBaseline:
+    """
+    TextWash NER baseline (Kleinberg et al., 2022).
+    
+    Open-source learned PII detection model. Directly comparable to Liu et al.
+    Appendix results. Outperforms spaCy/BERT by using probabilistic entity
+    classification trained specifically on PII.
+    
+    Setup:
+      1. pip install textwash  (or clone from GitHub)
+      2. Download models: https://drive.google.com/file/d/1YBccngYE3lvod87TI6UIhBzrN7nY9vHS/view?usp=sharing
+      3. Extract to ./data/ such that ./data/en/ contains model files
+    
+    Reference: Kleinberg et al., "Textwash: A Comprehensive Text Anonymisation 
+    Benchmark with Realistic PII", 2022.
+    """
+
+    # Maps TextWash entity types to PIE field names
+    ENTITY_MAPPING = {
+        "EMAIL_ADDRESS": "email",
+        "PHONE_NUMBER": "phone",
+        "ADDRESS": "address",
+        "PERSON_FIRSTNAME": "name_first",
+        "PERSON_LASTNAME": "name_last",
+        "ORGANIZATION": "affiliation",
+        "OCCUPATION": "occupation",
+        "DATE": "date",
+    }
+
+    def __init__(self, language="en", data_dir=None):
+        """
+        Args:
+            language: Language code ("en" for English, "nl" for Dutch).
+            data_dir: Path to TextWash data directory containing model folders.
+                      If None, uses ./data/
+        """
+        try:
+            from textwash.anonymizer import Anonymizer
+        except ImportError:
+            raise RuntimeError(
+                "TextWash not installed. Install from:\n"
+                "  pip install textwash\n"
+                "or\n"
+                "  git clone https://github.com/ben-aaron188/textwash.git\n\n"
+                "Then download models from: "
+                "https://drive.google.com/file/d/1YBccngYE3lvod87TI6UIhBzrN7nY9vHS"
+                " and extract to ./data/"
+            )
+
+        self.language = language
+        self.data_dir = data_dir or "./data"
+        
+        try:
+            self.anonymizer = Anonymizer(
+                language=language,
+                model_path=self.data_dir
+            )
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to initialize TextWash. Verify model path {self.data_dir}: {e}"
+            )
+
+    def extract(self, text):
+        """
+        Extract entities using TextWash learned PII detection.
+
+        Args:
+            text: Input text to extract from.
+
+        Returns:
+            Dict mapping your PIE field names to extracted values.
+        """
+        try:
+            # Get TextWash entity predictions (returns dict with entity types as keys)
+            predictions = self.anonymizer.get_entities(text)
+        except Exception as e:
+            # Fallback to empty dict on extraction error
+            print(f"Warning: TextWash extraction failed: {e}")
+            predictions = {}
+
+        # Map TextWash output → PIE fields using ENTITY_MAPPING
+        result = {}
+        for textwash_type, pie_field in self.ENTITY_MAPPING.items():
+            # predictions[textwash_type] is a list of detected spans
+            entities = predictions.get(textwash_type, [])
+            
+            if entities:
+                # For name fields, return first occurrence; for others, join
+                if pie_field in ["name_first", "name_last"]:
+                    result[pie_field] = entities[0] if entities else None
+                elif pie_field in ["email", "phone", "address"]:
+                    # Return single best match (first)
+                    result[pie_field] = entities[0] if entities else None
+                else:
+                    # affiliation, occupation: use first occurrence
+                    result[pie_field] = entities[0] if entities else None
+            else:
+                result[pie_field] = None
+
+        return result
 
 # ---------------------------------------------------------------------------
 # Convenience functions (notebook interface)

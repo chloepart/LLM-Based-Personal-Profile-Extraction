@@ -1,0 +1,121 @@
+{
+  "pred_overall_by_style": {
+    "direct": 0.5573,
+    "icl": 0.5015,
+    "pseudocode": 0.5413
+  },
+  "base_overall_by_method": {
+    "bert": 0.2056,
+    "keyword": 0.368,
+    "regex": 0.6478,
+    "spacy": 0.2296
+  },
+  "pred_field_means": {
+    "full_name_score": 0.9033,
+    "gender_score": 0.73,
+    "religion_score": 0.7561,
+    "birthdate_year_score": 0.1304,
+    "education_score": 0.5211,
+    "committee_roles_score": 0.128
+  },
+  "base_field_means": {
+    "full_name_score": 0.36,
+    "gender_score": 0.22,
+    "religion_score": 0.5545,
+    "birthdate_year_score": 0.3333,
+    "education_score": 0.4081,
+    "committee_roles_score": 0.1721
+  },
+  "comparison_table": {
+    "LLM_direct": {
+      "full_name_score": "0.9100 (n=100)",
+      "gender_score": "1.0000 (n=100)",
+      "religion_score": "0.6972 (n=36)",
+      "birthdate_year_score": "0.1250 (n=16)",
+      "education_score": "0.4812 (n=76)",
+      "committee_roles_score": "0.1306 (n=99)"
+    },
+    "LLM_icl": {
+      "full_name_score": "0.8900 (n=100)",
+      "gender_score": "0.5100 (n=100)",
+      "religion_score": "0.7688 (n=16)",
+      "birthdate_year_score": "0.1333 (n=15)",
+      "education_score": "0.5873 (n=71)",
+      "committee_roles_score": "0.1199 (n=99)"
+    },
+    "LLM_pseudocode": {
+      "full_name_score": "0.9100 (n=100)",
+      "gender_score": "0.6800 (n=100)",
+      "religion_score": "0.8929 (n=14)",
+      "birthdate_year_score": "0.1333 (n=15)",
+      "education_score": "0.4980 (n=72)",
+      "committee_roles_score": "0.1336 (n=99)"
+    },
+    "Baseline_bert": {
+      "full_name_score": "0.0000 (n=100)",
+      "gender_score": "0.0000 (n=100)",
+      "religion_score": "0.5529 (n=17)",
+      "birthdate_year_score": "nan (n=0)",
+      "education_score": "0.3202 (n=18)",
+      "committee_roles_score": "0.1549 (n=42)"
+    },
+    "Baseline_keyword": {
+      "full_name_score": "0.7100 (n=100)",
+      "gender_score": "0.0000 (n=100)",
+      "religion_score": "0.5600 (n=10)",
+      "birthdate_year_score": "nan (n=0)",
+      "education_score": "0.5249 (n=18)",
+      "committee_roles_score": "0.0454 (n=22)"
+    },
+    "Baseline_regex": {
+      "full_name_score": "0.7300 (n=100)",
+      "gender_score": "0.8800 (n=100)",
+      "religion_score": "nan (n=0)",
+      "birthdate_year_score": "0.3333 (n=6)",
+      "education_score": "nan (n=0)",
+      "committee_roles_score": "nan (n=0)"
+    },
+    "Baseline_spacy": {
+      "full_name_score": "0.0000 (n=100)",
+      "gender_score": "0.0000 (n=100)",
+      "religion_score": "0.5529 (n=17)",
+      "birthdate_year_score": "nan (n=0)",
+      "education_score": "0.3793 (n=18)",
+      "committee_roles_score": "0.2159 (n=80)"
+    }
+  },
+  "coverage": {
+    "pred_absolute_counts": {
+      "full_name_score": 300,
+      "gender_score": 300,
+      "religion_score": 66,
+      "birthdate_year_score": 46,
+      "education_score": 219,
+      "committee_roles_score": 297
+    },
+    "pred_coverage_pct": {
+      "full_name_score": 100.0,
+      "gender_score": 100.0,
+      "religion_score": 22.0,
+      "birthdate_year_score": 15.3,
+      "education_score": 73.0,
+      "committee_roles_score": 99.0
+    },
+    "base_absolute_counts": {
+      "full_name_score": 400,
+      "gender_score": 400,
+      "religion_score": 44,
+      "birthdate_year_score": 6,
+      "education_score": 54,
+      "committee_roles_score": 144
+    },
+    "base_coverage_pct": {
+      "full_name_score": 100.0,
+      "gender_score": 100.0,
+      "religion_score": 11.0,
+      "birthdate_year_score": 1.5,
+      "education_score": 13.5,
+      "committee_roles_score": 36.0
+    }
+  }
+}

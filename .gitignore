@@ -15,6 +15,8 @@ build/
 !.env.example
 
 # Configuration with sensitive data
+modules/config/keys
+configs/
 configs/model_configs/
 configs/*/api_keys.json
 configs/*/*_config.json  # Exclude model configs (regenerate from template)
